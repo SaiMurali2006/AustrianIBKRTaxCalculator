@@ -1,0 +1,39 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Streamlit local config and secrets
+.streamlit/secrets.toml
+
+# Application caches
+.cache/
+
+# Generated tax reports
+E1kv_Report_*.csv
+transaction_audit.csv
+manual_processing_required.csv
+
+# Logs
+*.log
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+

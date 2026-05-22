@@ -1,0 +1,18 @@
+<FlexQueryResponse>
+    <FlexStatements>
+        <FlexStatement>
+            <Trades>
+                <Trade currency="USD" fxRateToBase="0.84775" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" dateTime="20260414;145843" settleDateTarget="20260415" quantity="54" tradePrice="257.97" proceeds="-13930.38" ibCommission="-1" openCloseIndicator="O" cost="13931.38" fifoPnlRealized="0" buySell="BUY"/>
+                <Trade currency="USD" fxRateToBase="0.85000" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" dateTime="20260420;101500" settleDateTarget="20260421" quantity="-10" tradePrice="270" proceeds="2700" ibCommission="-1" openCloseIndicator="C" cost="0" fifoPnlRealized="0" buySell="SELL"/>
+                <Trade currency="USD" fxRateToBase="0.85000" assetCategory="OPT" symbol="AAPL  260417C00280000" description="AAPL CALL" isin="" dateTime="20260421;111500" settleDateTarget="20260422" quantity="-1" tradePrice="2.5" proceeds="250" ibCommission="-1" openCloseIndicator="O" cost="0" fifoPnlRealized="249" buySell="SELL"/>
+                <Trade currency="USD" fxRateToBase="0.85000" assetCategory="FUND" symbol="SPY" description="SPDR S&amp;P 500 ETF TRUST" isin="US78462F1030" dateTime="20260422;111500" settleDateTarget="20260423" quantity="2" tradePrice="500" proceeds="-1000" ibCommission="-1" openCloseIndicator="O" cost="1001" fifoPnlRealized="0" buySell="BUY"/>
+            </Trades>
+            <CashTransactions>
+                <CashTransaction currency="USD" fxRateToBase="0.85" symbol="AAPL" description="Dividend AAPL" isin="US0378331005" dateTime="20260425" settleDate="20260425" amount="20" type="Dividends"/>
+                <CashTransaction currency="USD" fxRateToBase="0.85" symbol="AAPL" description="US withholding tax" isin="US0378331005" dateTime="20260425" settleDate="20260425" amount="-3" type="Withholding Tax"/>
+                <CashTransaction currency="EUR" fxRateToBase="1" symbol="" description="Credit interest" isin="" dateTime="20260430" settleDate="20260430" amount="4.2" type="Broker Interest Received"/>
+            </CashTransactions>
+        </FlexStatement>
+    </FlexStatements>
+</FlexQueryResponse>
+
