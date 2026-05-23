@@ -391,6 +391,16 @@ div[data-testid="stAlert"] {
 
 div[data-testid="stSpinner"] { animation: fadeSlideUp 0.3s ease-out both; }
 
+/* ─── Performance View ────────────────────────────────────────────── */
+
+.perf-section-label {
+    color: var(--muted);
+    font-size: 0.70rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.09em;
+    margin: 10px 0 4px;
+    animation: fadeSlideIn 0.4s ease-out both;
+}
+
 /* ─── Footer ──────────────────────────────────────────────────────── */
 
 .kest-footer {
