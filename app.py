@@ -46,8 +46,9 @@ def main() -> None:
         st.info("Upload a statement file or enable the embedded sample.")
         return
 
-    parsed = get_parser(broker)(xml_payload)
-    result = TaxAggregator(ECBRateProvider()).run(parsed)
+    with st.spinner("Parsing statement and calculating KeSt…"):
+        parsed = get_parser(broker)(xml_payload)
+        result = TaxAggregator(ECBRateProvider()).run(parsed)
 
     if export_clicked:
         TaxAggregator.export_reports(result)
@@ -117,9 +118,23 @@ def render_summary(result, parsed) -> None:
 
     st.download_button("Download E1kv CSV", _csv_bytes(mapping), "E1kv_Report_2026.csv", "text/csv")
 
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+    gross_kest = round(result.taxable_base * 0.275, 2)
+    with st.expander("KeSt Calculation Breakdown"):
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Taxable 27.5% Basket", _eur(result.taxable_base))
+        c2.metric("Gross KeSt (×27.5%)", _eur(gross_kest))
+        c3.metric("Foreign Tax Credit", f"−{_eur(result.foreign_tax_credit)}")
+        c4.metric("Net KeSt Due", _eur(result.tax_due))
+
+    st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
     if not result.manual_processing.empty:
         st.warning("ETF/FUND rows detected. Austrian fund taxation can require OeKB reporting and manual processing.")
         st.dataframe(result.manual_processing, use_container_width=True)
+
+    _footer()
 
 
 def render_audit(result) -> None:
@@ -147,6 +162,15 @@ def render_audit(result) -> None:
             "manual_processing_required.csv",
             "text/csv",
         )
+
+    _footer()
+
+
+def _footer() -> None:
+    st.markdown(
+        '<div class="kest-footer">Austrian KeSt Engine — calculation aid only, not tax advice. Consult a qualified tax professional before filing.</div>',
+        unsafe_allow_html=True,
+    )
 
 
 def _eur(value: float) -> str:
