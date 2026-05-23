@@ -38,9 +38,9 @@ The canonical boundary is `models.ParsedData`. Any broker parser must produce th
 | `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML` | `models`, stdlib, pandas |
 | `tax_engine.py` | `ParsedData` → `TaxResult`; broker-agnostic | `models`, `currency_provider` |
 | `currency_provider.py` | EUR conversion, ECB cache | stdlib only |
-| `app.py` | Streamlit UI, broker selector, rendering | `parsers`, `tax_engine`, `styles`, `currency_provider` |
+| `app.py` | Streamlit UI; session_state caching; three-view navigation; Altair Performance charts | `parsers`, `tax_engine`, `styles`, `currency_provider`, `altair`, `hashlib` |
 | `styles.py` | Dark FinTech CSS string | nothing |
-| `smoke_test.py` | Quick sanity check | `parsers`, `tax_engine` |
+| `smoke_test.py` | Engine verification with structural and directional value assertions | `parsers`, `tax_engine` |
 
 ---
 
@@ -64,7 +64,7 @@ All broker parsers must produce this dataclass. The tax engine reads only these 
 class ParsedData:
     stocks: pd.DataFrame       # TRADE_COLUMNS, assetCategory == STK
     options: pd.DataFrame      # TRADE_COLUMNS, assetCategory in {OPT, FOP, WAR, IOPT}
-    funds: pd.DataFrame        # TRADE_COLUMNS, assetCategory == FUND (manual review queue)
+    funds: pd.DataFrame        # TRADE_COLUMNS, FUND + any unrecognised assetCategory (manual review queue)
     dividends: pd.DataFrame    # CASH_COLUMNS, matched by dividend/withholding keywords
     interest: pd.DataFrame     # CASH_COLUMNS, matched by interest keywords
     cash_other: pd.DataFrame   # CASH_COLUMNS, everything else
@@ -79,6 +79,10 @@ class ParsedData:
 `date`, `datetime`, `currency`, `fxRateToBase`, `symbol`, `description`, `isin`, `amount`, `type`, `tax`
 
 Missing optional fields should be `None` / `0.0` — never raise on missing input.
+
+### Unknown asset categories
+
+In `parsers/ibkr_flex.py`, any `assetCategory` that is not in `{STK, OPT, FOP, WAR, IOPT, FUND}` (e.g. `FUT`, `BOND`, `CASH`) is concatenated into `funds` so it surfaces in the manual review queue. Silent exclusion from the tax calculation is not acceptable.
 
 ---
 
@@ -112,16 +116,32 @@ KEST_RATE = 0.275   # Austrian KESt — 27.5%
 
 E1kv field mapping:
 
-| Field | Category |
-|---|---|
-| `"861"` | Stock capital gains |
-| `"775"` | Derivative gains |
-| `"862"` | Dividends |
-| `"777"` | Interest (domestic) |
-| `"863"` | Interest (foreign) |
-| `"998"` | Foreign withholding tax (creditable) |
+| Field | Category | Note |
+|---|---|---|
+| `"861"` | Stock capital gains | Moving-average realization |
+| `"775"` | Derivative gains | `fifoPnlRealized` on close; 0 on open |
+| `"862"` | Dividends | Gross income |
+| `"777"` | Interest (domestic) | Alias; set equal to `"863"` |
+| `"863"` | Interest (foreign) | IBKR is a foreign broker — audit rows use `"863"` |
+| `"998"` | Foreign withholding tax | Creditable against gross KeSt |
 
-Funds (`FUND`) are routed to `manual_processing` queue, not calculated automatically — Austrian fund tax rules require per-fund inspection.
+Funds (`FUND`) and any unrecognised asset categories are routed to `manual_processing` — Austrian fund tax rules require per-fund inspection.
+
+### Derivative P/L — open vs close
+
+`DerivativeProcessor` uses `fifoPnlRealized` as the primary P/L source:
+
+```python
+fifo_pnl = float(trade["fifoPnlRealized"])
+open_close = str(trade.get("openCloseIndicator", "")).upper()
+pnl_original = fifo_pnl if fifo_pnl != 0.0 else (proceeds + commission if "C" in open_close else 0.0)
+```
+
+- Non-zero `fifoPnlRealized` → always use it.
+- Zero + close indicator → `proceeds + commission` fallback (IBKR omitted the value).
+- Zero + open indicator → `0.0` (nothing realized on opening leg).
+
+**Never use `float_value or fallback`** for numeric P/L — `0.0` is falsy in Python and would replace a legitimate break-even result with the fallback.
 
 ---
 
@@ -176,7 +196,44 @@ Category → accent color:
 | ETF / Funds | Gold | `#FFD700` |
 | Tax due | Red | `#FF4D6D` |
 
-CSS classes to reuse: `.metric-grid`, `.card-wrap`, `.tax-card`, `.status-pill`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
+CSS classes to reuse: `.metric-grid`, `.card-wrap`, `.tax-card`, `.status-pill`, `.perf-section-label`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
+
+### Three-view navigation
+
+The sidebar radio offers three views:
+
+| View | Function | Data source |
+|---|---|---|
+| Executive Summary | `render_summary(result, parsed)` | `TaxResult` + `ParsedData` |
+| Detailed Audit Trail | `render_audit(result)` | `TaxResult.audit` |
+| Performance | `render_performance(result)` | `TaxResult.audit` filtered to STK/OPT |
+
+### Session State Caching
+
+Parsed data is cached in `st.session_state` using a content-hash key so the spinner only fires once per unique file/broker combination:
+
+```python
+cache_key = hashlib.md5(xml_payload if isinstance(xml_payload, bytes)
+                        else xml_payload.encode()).hexdigest() + broker
+if cache_key not in st.session_state:
+    with st.spinner("Parsing statement and calculating KeSt…"):
+        parsed = get_parser(broker)(xml_payload)
+        result = TaxAggregator(ECBRateProvider()).run(parsed)
+        st.session_state[cache_key] = (parsed, result)
+parsed, result = st.session_state[cache_key]
+```
+
+This ensures view-switching never re-parses.
+
+### Performance View (Altair)
+
+`render_performance(result)` builds three Altair charts from `result.audit` filtered to `category in {"STK", "OPT"}`:
+
+- **Cumulative P/L timeline** — area + line + coloured scatter, interactive zoom/pan.
+- **Monthly breakdown** — grouped bars: gains (green), fees (gold), estimated KeSt (red).
+- **Top holdings** — horizontal bar per symbol, green/red by P/L sign.
+
+The Altair dark theme is registered at module level in `app.py` and must match the CSS palette. Charts use `_date:T` (pandas datetime) for temporal axes — never format as a string before passing to Altair.
 
 ### Metric Card HTML Structure
 
@@ -197,6 +254,7 @@ Tooltips use a CSS `::after` pseudo-element on `.card-wrap[data-tip]`.
 - Tooltip appears **above** the card (`bottom: calc(100% + 9px)`) — never covered by the status strip below.
 - `.card-wrap` has `z-index: 1` by default; `:hover` raises it to `z-index: 10`. This is required because `animation` on `.card-wrap` creates a CSS stacking context — without raising the hovered card's context, siblings painted later in DOM order cover the tooltip regardless of the `::after` z-index value.
 - `div[data-testid="stMarkdownContainer"]` and related Streamlit wrappers are forced to `overflow: visible` so the tooltip is never clipped.
+- Tooltip text is plain — `<a href>` tags in `data-tip` render literally, not as links. For clickable source links use the `st.expander("E1kv Field References")` below the cards.
 - For Streamlit-native widgets (`st.metric`, `st.selectbox`, etc.) use the built-in `help=` parameter.
 
 ### Sample Data Behaviour
@@ -221,9 +279,10 @@ The embedded sample toggle defaults to `False` — users must explicitly enable 
 ```
 pandas>=2.2
 streamlit>=1.35
+altair>=5        # direct import in app.py; also bundled with Streamlit
 ```
 
-Standard library only beyond these two. Do not add dependencies without a strong reason.
+Standard library only beyond these. Do not add dependencies without a strong reason.
 
 ---
 
@@ -251,3 +310,6 @@ python smoke_test.py
 - Do not commit `.cache/`, generated CSV reports, or `venv/`.
 - Do not add E1kv field mapping outside `tax_engine.py`.
 - Do not import from `parsers/ibkr_flex.py` directly — always go through `parsers.get_parser()`.
+- Do not use Python `or` for numeric fallback logic (`0.0 or fallback` silently replaces legitimate zero values — use an explicit `if value != 0.0` check instead).
+- Do not silently discard trades with unrecognised `assetCategory` — route them to the manual queue.
+- Do not include `DIV`/`INT` audit rows in trading performance calculations — filter to `STK`/`OPT` only.

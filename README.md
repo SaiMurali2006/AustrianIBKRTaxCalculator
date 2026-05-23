@@ -14,11 +14,11 @@ Turns a brokerage statement export into a structured Austrian **E1kv** capital i
 The core engine is built around Austrian private-investor tax concepts:
 
 - **Stocks:** moving average cost basis (`Gleitender Durchschnittspreis`)
-- **Options and derivatives:** realized premium and close-out P/L
+- **Options and derivatives:** realized premium and close-out P/L, open vs close correctly separated
 - **Dividends and interest:** gross income tracking
 - **Foreign withholding tax:** creditable tax bucket for E1kv field 998
 - **Loss offsetting:** internal offset inside the 27.5% capital income basket
-- **ETF/FUND detection:** automatic manual-processing queue
+- **ETF/FUND and unknown asset detection:** automatic manual-processing queue
 
 ## Visual Identity
 
@@ -39,7 +39,7 @@ Dark FinTech theme with animated metric cards, staggered entrance animations, ho
 | **861** | Realized stock gains taxable at 27.5% | `assetCategory="STK"` moving-average realization |
 | **775** | Income from derivatives and options | `assetCategory="OPT"` and related derivative categories |
 | **862** | Dividends | Cash dividend transactions |
-| **777 / 863** | Foreign interest income | Cash interest transactions |
+| **863** | Foreign interest income | Cash interest transactions (IBKR is a foreign broker) |
 | **998** | Creditable foreign withholding tax | Withholding-tax cash rows |
 
 ## Architecture
@@ -72,7 +72,7 @@ flowchart LR
 
 ```text
 tax_calculator_v7/
-├── app.py                         # Streamlit entry point and dashboard
+├── app.py                         # Streamlit entry point; session_state caching; three-view navigation
 ├── models.py                      # Shared contracts: ParsedData, TaxResult, column schemas
 ├── tax_engine.py                  # Austrian KeSt calculation engine (broker-agnostic)
 ├── currency_provider.py           # ECB FX provider with local JSON cache
@@ -80,9 +80,9 @@ tax_calculator_v7/
 ├── parsers/
 │   ├── __init__.py                # Broker registry: BROKER_REGISTRY, get_parser()
 │   └── ibkr_flex.py               # IBKR Flex XML → ParsedData
-├── sample_flex.xml                # Demonstration Flex XML
-├── smoke_test.py                  # Minimal engine verification
-└── requirements.txt               # Runtime dependencies (pandas, streamlit)
+├── sample_flex.xml                # Demonstration Flex XML (stock buy+sell, option, fund, dividends)
+├── smoke_test.py                  # Engine verification with structural and value assertions
+└── requirements.txt               # Runtime dependencies
 ```
 
 ## Quick Start
@@ -101,13 +101,17 @@ Then open the local URL shown in the terminal.
 1. Select your **Broker** in the sidebar (currently: IBKR Flex XML).
 2. Upload the corresponding statement file. To explore without a real file, enable **Use embedded sample** — a blue banner appears to remind you that demo data is active.
 3. Review the **Executive Summary** for:
-   - six metric cards in a 3×2 grid — hover any card to see a plain-language explanation of that E1kv field and where to report it
-   - KeSt calculation breakdown (taxable basket → gross KeSt → credit → net due), each step with a `?` tooltip
-   - E1kv field mapping table and category P/L chart
-   - ETF/FUND manual-processing warnings
+   - Six metric cards in a 3×2 grid — hover any card for a plain-language explanation and the BMF source; expand **E1kv Field References** for clickable links to the legal texts.
+   - KeSt calculation breakdown (taxable basket → gross KeSt → credit → net due), each step with a tooltip.
+   - E1kv field mapping table and category P/L chart.
+   - ETF/FUND and unknown-category manual-processing warnings.
 4. Switch to **Detailed Audit Trail** for:
-   - trade-level EUR conversion with ECB or fallback FX source
-   - buy/sell timing, cost basis evolution, realized P/L per line
+   - Trade-level EUR conversion with ECB or fallback FX source.
+   - Buy/sell timing, cost basis evolution, and realized P/L per line.
+5. Switch to **Performance** for:
+   - Cumulative realized P/L timeline (stocks + derivatives only, interactive zoom/pan).
+   - Monthly breakdown of gains, fees, and estimated KeSt.
+   - Top holdings ranked by total P/L.
 
 All sidebar controls (broker selector, file uploader, sample toggle, export button) also carry hover tooltips explaining their purpose.
 
@@ -125,7 +129,7 @@ The tax engine and UI require zero changes.
 | --- | --- |
 | `E1kv_Report_2026.csv` | Direct E1kv field summary |
 | `transaction_audit.csv` | Trade-by-trade calculation log with FX details |
-| `manual_processing_required.csv` | ETF/FUND rows requiring separate Austrian fund-tax review |
+| `manual_processing_required.csv` | ETF/FUND and unrecognised-category rows requiring manual review |
 
 ## Calculation Highlights
 
@@ -138,6 +142,10 @@ NewAvgCost =
 ```
 
 Sales realize P/L against the running moving-average cost basis.
+
+### Derivative P/L (Open vs Close)
+
+Opening trades contribute zero realized P/L. Closing trades use `fifoPnlRealized` from the broker, with `proceeds + commission` as a fallback only when the broker omits it on a closing leg.
 
 ### FX Conversion
 
@@ -166,12 +174,15 @@ python smoke_test.py
 # smoke test passed
 ```
 
+Checks structure, directional values (stock gains > 0, option income > 0, tax due > 0), and a regression guard ensuring opening derivative trades never contribute non-zero realized P/L.
+
 ## Important Disclaimer
 
 This software is a technical calculation aid, not official tax advice. Austrian capital income taxation can depend on broker data quality, investor status, fund reporting, treaty limits, account structure, and yearly FinanzOnline rules. Review results carefully and consult a qualified Austrian tax professional before filing.
 
 ## Roadmap
 
+- Unit test suite for `CapitalGainsProcessor`, `DerivativeProcessor`, and KeSt formula
 - Historical ECB archive backfill beyond the 90-day cache window
 - Full option lifecycle reconstruction for complex multi-leg strategies
 - OeKB fund-report integration for Austrian ETF taxation
