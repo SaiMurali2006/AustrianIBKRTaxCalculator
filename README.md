@@ -99,15 +99,17 @@ Then open the local URL shown in the terminal.
 ## Using the Dashboard
 
 1. Select your **Broker** in the sidebar (currently: IBKR Flex XML).
-2. Upload the corresponding statement file, or enable the **embedded sample**.
+2. Upload the corresponding statement file. To explore without a real file, enable **Use embedded sample** — a blue banner appears to remind you that demo data is active.
 3. Review the **Executive Summary** for:
-   - profit/loss per tax category with animated metric cards
-   - KeSt calculation breakdown (taxable basket → gross KeSt → credit → net due)
-   - E1kv field mapping table
+   - six metric cards in a 3×2 grid — hover any card to see a plain-language explanation of that E1kv field and where to report it
+   - KeSt calculation breakdown (taxable basket → gross KeSt → credit → net due), each step with a `?` tooltip
+   - E1kv field mapping table and category P/L chart
    - ETF/FUND manual-processing warnings
 4. Switch to **Detailed Audit Trail** for:
    - trade-level EUR conversion with ECB or fallback FX source
    - buy/sell timing, cost basis evolution, realized P/L per line
+
+All sidebar controls (broker selector, file uploader, sample toggle, export button) also carry hover tooltips explaining their purpose.
 
 ## Adding a New Broker
 

@@ -176,7 +176,32 @@ Category → accent color:
 | ETF / Funds | Gold | `#FFD700` |
 | Tax due | Red | `#FF4D6D` |
 
-CSS classes: `.metric-card`, `.metric-grid`, `.status-pill`, `.fintech-btn`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
+CSS classes to reuse: `.metric-grid`, `.card-wrap`, `.tax-card`, `.status-pill`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
+
+### Metric Card HTML Structure
+
+All six metric cards **must** be rendered in a single `st.markdown` call. Splitting across multiple calls puts each card in its own Streamlit wrapper `<div>`, breaking the CSS grid (cards stack vertically instead of 3×2).
+
+```python
+cards_html = '<div class="metric-grid">'
+for color, field, label, value, tip in field_cards:
+    cards_html += f'<div class="card-wrap" data-tip="{tip}"><div class="tax-card {color}">...</div></div>'
+cards_html += "</div>"
+st.markdown(cards_html, unsafe_allow_html=True)
+```
+
+### Tooltip Architecture
+
+Tooltips use a CSS `::after` pseudo-element on `.card-wrap[data-tip]`.
+
+- Tooltip appears **above** the card (`bottom: calc(100% + 9px)`) — never covered by the status strip below.
+- `.card-wrap` has `z-index: 1` by default; `:hover` raises it to `z-index: 10`. This is required because `animation` on `.card-wrap` creates a CSS stacking context — without raising the hovered card's context, siblings painted later in DOM order cover the tooltip regardless of the `::after` z-index value.
+- `div[data-testid="stMarkdownContainer"]` and related Streamlit wrappers are forced to `overflow: visible` so the tooltip is never clipped.
+- For Streamlit-native widgets (`st.metric`, `st.selectbox`, etc.) use the built-in `help=` parameter.
+
+### Sample Data Behaviour
+
+The embedded sample toggle defaults to `False` — users must explicitly enable it. When active without a real file uploaded, a blue `st.info` banner is shown so the user always knows they are looking at demo data, not their own results.
 
 ---
 

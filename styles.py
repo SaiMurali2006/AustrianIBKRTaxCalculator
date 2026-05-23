@@ -1,110 +1,90 @@
-"""Animated dark FinTech theme for the Austrian KeSt dashboard."""
+"""Animated dark FinTech theme — compact layout for the Austrian KeSt dashboard."""
 
 FINTECH_CSS = """
 <style>
 /* ─── Design Tokens ───────────────────────────────────────────────── */
 :root {
-    --bg:          #0E1117;
-    --panel:       #151A23;
-    --panel-soft:  #1B2230;
-    --text:        #F4F7FB;
-    --muted:       #8B98A9;
-    --blue:        #00D4FF;
-    --purple:      #BB86FC;
-    --green:       #00FF88;
-    --gold:        #FFD700;
-    --red:         #FF4D6D;
+    --bg:         #0E1117;
+    --panel:      #151A23;
+    --panel-soft: #1B2230;
+    --text:       #F4F7FB;
+    --muted:      #8B98A9;
+    --blue:       #00D4FF;
+    --purple:     #BB86FC;
+    --green:      #00FF88;
+    --gold:       #FFD700;
+    --red:        #FF4D6D;
 }
 
 /* ─── Keyframes ───────────────────────────────────────────────────── */
 
 @keyframes fadeSlideUp {
-    from { opacity: 0; transform: translateY(20px); }
+    from { opacity: 0; transform: translateY(16px); }
     to   { opacity: 1; transform: translateY(0);    }
 }
-
 @keyframes fadeSlideIn {
-    from { opacity: 0; transform: translateX(-18px); }
+    from { opacity: 0; transform: translateX(-16px); }
     to   { opacity: 1; transform: translateX(0);     }
 }
-
 @keyframes scaleIn {
-    from { opacity: 0; transform: scale(0.94); }
+    from { opacity: 0; transform: scale(0.95); }
     to   { opacity: 1; transform: scale(1);    }
 }
-
 @keyframes popIn {
-    0%   { opacity: 0; transform: scale(0.75); }
-    65%  {             transform: scale(1.07); }
+    0%   { opacity: 0; transform: scale(0.78); }
+    65%  {             transform: scale(1.06); }
     100% { opacity: 1; transform: scale(1);    }
 }
-
 @keyframes shimmer {
     0%   { transform: translateX(-100%); }
-    100% { transform: translateX(200%);  }
+    100% { transform: translateX(220%);  }
 }
-
 @keyframes pulseGlowRed {
-    0%, 100% { box-shadow: 0 0 20px rgba(255, 77,  109, 0.10), inset 0 0 0 rgba(255,77,109,0); }
-    50%       { box-shadow: 0 0 50px rgba(255, 77,  109, 0.40), inset 0 0 20px rgba(255,77,109,0.03); }
+    0%, 100% { box-shadow: 0 0 16px rgba(255, 77, 109, 0.10); }
+    50%       { box-shadow: 0 0 44px rgba(255, 77, 109, 0.42); }
 }
-
-@keyframes pulseGlowBlue {
-    0%, 100% { box-shadow: 0 0 22px rgba(0, 212, 255, 0.08); }
-    50%       { box-shadow: 0 0 44px rgba(0, 212, 255, 0.28); }
-}
-
 @keyframes countIn {
-    from { opacity: 0; transform: translateY(8px) scale(0.97); }
-    to   { opacity: 1; transform: translateY(0)   scale(1);    }
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: translateY(0);   }
 }
-
 @keyframes heroPulse {
-    0%, 100% { opacity: 0.55; transform: scale(1);    }
-    50%       { opacity: 0.80; transform: scale(1.04); }
+    0%, 100% { opacity: 0.45; transform: scale(1);    }
+    50%       { opacity: 0.72; transform: scale(1.05); }
 }
-
-@keyframes borderGlow {
-    0%, 100% { opacity: 0.45; }
-    50%       { opacity: 0.90; }
-}
-
 @keyframes dotPulse {
-    0%, 100% { transform: scale(1);    opacity: 1;    box-shadow: 0 0 5px currentColor; }
-    50%       { transform: scale(1.45); opacity: 0.75; box-shadow: 0 0 12px currentColor; }
+    0%, 100% { transform: scale(1);   box-shadow: 0 0 3px currentColor; }
+    50%       { transform: scale(1.5); box-shadow: 0 0 9px currentColor; }
 }
-
-@keyframes spinnerDash {
-    0%   { stroke-dasharray: 1, 150; stroke-dashoffset: 0;   }
-    50%  { stroke-dasharray: 90, 150; stroke-dashoffset: -35; }
-    100% { stroke-dasharray: 90, 150; stroke-dashoffset: -124;}
+@keyframes tooltipIn {
+    from { opacity: 0; transform: translateX(-50%) translateY(4px); }
+    to   { opacity: 1; transform: translateX(-50%) translateY(0);   }
 }
 
 /* ─── Base ────────────────────────────────────────────────────────── */
 
 .stApp {
     background:
-        radial-gradient(ellipse at 15% 10%, rgba(0, 212, 255, 0.11), transparent 28%),
-        radial-gradient(ellipse at 88% 8%,  rgba(187, 134, 252, 0.12), transparent 26%),
-        radial-gradient(ellipse at 50% 90%, rgba(0, 255, 136, 0.05), transparent 30%),
+        radial-gradient(ellipse at 15% 10%, rgba(0,212,255,0.10), transparent 28%),
+        radial-gradient(ellipse at 88% 8%,  rgba(187,134,252,0.11), transparent 26%),
+        radial-gradient(ellipse at 50% 90%, rgba(0,255,136,0.04), transparent 30%),
         var(--bg);
     color: var(--text);
 }
 
 .block-container {
-    padding-top: 2rem;
-    padding-bottom: 3rem;
+    padding-top: 0.9rem !important;
+    padding-bottom: 1.5rem !important;
+    max-width: 100% !important;
 }
 
-h1, h2, h3 { letter-spacing: 0; color: var(--text); }
+h1 { margin: 0 0 0.5rem  !important; }
+h2 { margin: 0 0 0.3rem  !important; font-size: 1.05rem !important; animation: fadeSlideIn 0.4s ease-out both; }
+h3 { margin: 0 0 0.25rem !important; font-size: 0.95rem !important; animation: fadeSlideIn 0.4s ease-out both; }
 
-h2, h3 { animation: fadeSlideIn 0.4s ease-out both; }
-
-/* Scrollbars */
-::-webkit-scrollbar             { width: 5px; height: 5px; }
+::-webkit-scrollbar             { width: 4px; height: 4px; }
 ::-webkit-scrollbar-track       { background: transparent; }
-::-webkit-scrollbar-thumb       { background: rgba(255,255,255,0.13); border-radius: 4px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.24); }
+::-webkit-scrollbar-thumb       { background: rgba(255,255,255,0.12); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.22); }
 
 /* ─── Sidebar ─────────────────────────────────────────────────────── */
 
@@ -112,14 +92,12 @@ section[data-testid="stSidebar"] {
     background: linear-gradient(180deg, #090C10 0%, #0A0D14 100%);
     border-right: 1px solid rgba(255,255,255,0.07);
 }
-
 section[data-testid="stSidebar"] > div:first-child {
-    animation: fadeSlideIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
+    animation: fadeSlideIn 0.4s cubic-bezier(0.22,1,0.36,1) both;
 }
-
 section[data-testid="stSidebar"] label {
     color: var(--muted) !important;
-    font-size: 0.76rem !important;
+    font-size: 0.74rem !important;
     text-transform: uppercase;
     letter-spacing: 0.07em;
     font-weight: 700 !important;
@@ -128,174 +106,173 @@ section[data-testid="stSidebar"] label {
 /* ─── Hero ────────────────────────────────────────────────────────── */
 
 .tax-hero {
-    padding: 28px 30px 26px;
+    padding: 14px 18px 13px;
     border: 1px solid rgba(255,255,255,0.09);
-    border-radius: 12px;
+    border-radius: 10px;
     background: linear-gradient(135deg, rgba(21,26,35,0.97), rgba(11,14,20,0.95));
-    box-shadow: 0 20px 56px rgba(0,0,0,0.48);
-    margin-bottom: 22px;
+    box-shadow: 0 12px 36px rgba(0,0,0,0.42);
+    margin-bottom: 12px;
     position: relative;
     overflow: hidden;
-    animation: scaleIn 0.5s cubic-bezier(0.22,1,0.36,1) both;
+    animation: scaleIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
 }
-
-/* Ambient glow orb behind hero */
 .tax-hero::before {
     content: "";
     position: absolute;
-    top: -60px; left: -60px;
-    width: 260px; height: 260px;
+    top: -50px; left: -50px;
+    width: 200px; height: 200px;
     border-radius: 50%;
-    background: radial-gradient(circle, rgba(0,212,255,0.08), transparent 70%);
+    background: radial-gradient(circle, rgba(0,212,255,0.07), transparent 70%);
     animation: heroPulse 5s ease-in-out infinite;
     pointer-events: none;
 }
-
-/* Shimmer sweep across hero */
 .tax-hero::after {
     content: "";
     position: absolute;
-    inset: 0;
-    width: 50%;
-    background: linear-gradient(
-        105deg,
-        transparent 30%,
-        rgba(255,255,255,0.045) 50%,
-        transparent 70%
-    );
+    inset: 0; width: 50%;
+    background: linear-gradient(105deg, transparent 30%, rgba(255,255,255,0.04) 50%, transparent 70%);
     animation: shimmer 5s ease-in-out infinite;
     pointer-events: none;
 }
-
 .tax-hero .eyebrow {
     color: var(--blue);
-    font-size: 0.76rem;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.11em;
-    animation: fadeSlideIn 0.5s ease-out 0.10s both;
+    font-size: 0.70rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.10em;
+    animation: fadeSlideIn 0.45s ease-out 0.08s both;
 }
-
 .tax-hero .title {
-    font-size: 2.2rem;
-    line-height: 1.1;
-    font-weight: 800;
-    margin: 7px 0 10px;
-    animation: fadeSlideUp 0.5s ease-out 0.16s both;
+    font-size: 1.65rem; line-height: 1.12; font-weight: 800;
+    margin: 4px 0 5px;
+    animation: fadeSlideUp 0.45s ease-out 0.13s both;
 }
-
 .tax-hero .subtitle {
-    color: var(--muted);
-    max-width: 860px;
-    font-size: 0.97rem;
-    line-height: 1.55;
-    animation: fadeSlideUp 0.5s ease-out 0.23s both;
+    color: var(--muted); max-width: 860px;
+    font-size: 0.83rem; line-height: 1.45;
+    animation: fadeSlideUp 0.45s ease-out 0.19s both;
 }
 
-/* ─── Metric Grid ─────────────────────────────────────────────────── */
+/* Prevent Streamlit wrapper divs from clipping overflowing tooltips */
+div[data-testid="stMarkdownContainer"],
+div[data-testid="stVerticalBlock"],
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    overflow: visible !important;
+}
+
+/* ─── Metric Grid — always 3 columns ─────────────────────────────── */
 
 .metric-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-    gap: 14px;
-    margin: 14px 0 20px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin: 8px 0 10px;
+    overflow: visible;
+}
+
+/* ─── Card Wrapper — carries the tooltip ─────────────────────────── */
+
+.card-wrap {
+    position: relative;
+    /* z-index:1 ensures each wrap participates in the same stacking order.
+       On hover we raise to 10 so the active card's stacking context sits above
+       all siblings — otherwise adjacent cards (painted later in DOM order) would
+       cover the ::after tooltip even at z-index:9999. */
+    z-index: 1;
+    animation: fadeSlideUp 0.50s cubic-bezier(0.22,1,0.36,1) both;
+}
+.card-wrap:nth-child(1) { animation-delay: 0.07s; }
+.card-wrap:nth-child(2) { animation-delay: 0.13s; }
+.card-wrap:nth-child(3) { animation-delay: 0.19s; }
+.card-wrap:nth-child(4) { animation-delay: 0.25s; }
+.card-wrap:nth-child(5) { animation-delay: 0.31s; }
+.card-wrap:nth-child(6) { animation-delay: 0.37s; }
+
+.card-wrap:hover { z-index: 10; }
+
+/* CSS Tooltip — appears ABOVE the card so it is never covered by rows below */
+.card-wrap[data-tip]::after {
+    content: attr(data-tip);
+    position: absolute;
+    bottom: calc(100% + 9px);
+    top: auto;
+    left: 50%;
+    transform: translateX(-50%) translateY(6px);
+    width: 240px;
+    background: rgba(9,12,16,0.97);
+    border: 1px solid rgba(255,255,255,0.14);
+    border-radius: 8px;
+    padding: 9px 13px;
+    font-size: 0.75rem;
+    line-height: 1.5;
+    color: var(--muted);
+    text-align: left;
+    white-space: normal;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
+    z-index: 9999;
+    box-shadow: 0 10px 32px rgba(0,0,0,0.65);
+}
+.card-wrap[data-tip]:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
 }
 
 /* ─── Tax Cards ───────────────────────────────────────────────────── */
 
 .tax-card {
-    min-height: 150px;
-    padding: 18px 18px 16px;
-    border-radius: 11px;
-    background: rgba(19, 24, 33, 0.94);
+    min-height: 108px;
+    padding: 11px 13px 10px;
+    border-radius: 9px;
+    background: rgba(19,24,33,0.94);
     border: 1px solid rgba(255,255,255,0.09);
-    box-shadow: 0 10px 28px rgba(0,0,0,0.30);
+    box-shadow: 0 8px 22px rgba(0,0,0,0.28);
     position: relative;
     overflow: hidden;
     cursor: default;
-    transition: transform 0.24s cubic-bezier(0.22,1,0.36,1),
-                box-shadow  0.24s ease;
-    animation: fadeSlideUp 0.55s cubic-bezier(0.22,1,0.36,1) both;
+    height: 100%;
+    transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), box-shadow 0.22s ease;
 }
+.card-wrap:hover .tax-card { transform: translateY(-4px) scale(1.014); }
 
-/* staggered entrance */
-.tax-card:nth-child(1) { animation-delay: 0.08s; }
-.tax-card:nth-child(2) { animation-delay: 0.15s; }
-.tax-card:nth-child(3) { animation-delay: 0.22s; }
-.tax-card:nth-child(4) { animation-delay: 0.29s; }
-.tax-card:nth-child(5) { animation-delay: 0.36s; }
-.tax-card:nth-child(6) { animation-delay: 0.43s; }
-
-/* hover lift */
-.tax-card:hover { transform: translateY(-6px) scale(1.016); }
-
-/* shimmer sweep on hover */
+/* shimmer on hover */
 .tax-card::before {
     content: "";
     position: absolute;
-    top: 0; left: 0;
-    width: 55%; height: 100%;
-    background: linear-gradient(
-        110deg,
-        transparent 35%,
-        rgba(255,255,255,0.06) 50%,
-        transparent 65%
-    );
+    top: 0; left: 0; width: 55%; height: 100%;
+    background: linear-gradient(110deg, transparent 35%, rgba(255,255,255,0.055) 50%, transparent 65%);
     transform: translateX(-100%);
 }
-.tax-card:hover::before { animation: shimmer 0.6s ease forwards; }
+.card-wrap:hover .tax-card::before { animation: shimmer 0.55s ease forwards; }
 
-/* color variants with animated border glow */
-.tax-card.blue {
-    border-color: rgba(0, 212, 255, 0.45);
-    box-shadow: 0 0 22px rgba(0, 212, 255, 0.09);
-}
-.tax-card.blue:hover   { box-shadow: 0 10px 40px rgba(0, 212, 255, 0.26); }
+/* colour variants */
+.tax-card.blue   { border-color: rgba(0,212,255,0.45);   box-shadow: 0 0 18px rgba(0,212,255,0.09); }
+.tax-card.purple { border-color: rgba(187,134,252,0.45); box-shadow: 0 0 18px rgba(187,134,252,0.09); }
+.tax-card.green  { border-color: rgba(0,255,136,0.40);   box-shadow: 0 0 18px rgba(0,255,136,0.08); }
+.tax-card.gold   { border-color: rgba(255,215,0,0.45);   box-shadow: 0 0 18px rgba(255,215,0,0.08); }
 
-.tax-card.purple {
-    border-color: rgba(187, 134, 252, 0.45);
-    box-shadow: 0 0 22px rgba(187, 134, 252, 0.09);
-}
-.tax-card.purple:hover { box-shadow: 0 10px 40px rgba(187, 134, 252, 0.26); }
+.card-wrap:hover .tax-card.blue   { box-shadow: 0 8px 32px rgba(0,212,255,0.24); }
+.card-wrap:hover .tax-card.purple { box-shadow: 0 8px 32px rgba(187,134,252,0.24); }
+.card-wrap:hover .tax-card.green  { box-shadow: 0 8px 32px rgba(0,255,136,0.22); }
+.card-wrap:hover .tax-card.gold   { box-shadow: 0 8px 32px rgba(255,215,0,0.22); }
 
-.tax-card.green {
-    border-color: rgba(0, 255, 136, 0.40);
-    box-shadow: 0 0 22px rgba(0, 255, 136, 0.08);
-}
-.tax-card.green:hover  { box-shadow: 0 10px 40px rgba(0, 255, 136, 0.22); }
-
-.tax-card.gold {
-    border-color: rgba(255, 215, 0, 0.45);
-    box-shadow: 0 0 22px rgba(255, 215, 0, 0.08);
-}
-.tax-card.gold:hover   { box-shadow: 0 10px 40px rgba(255, 215, 0, 0.22); }
-
-/* Red card: persistent pulse glow */
+/* Red: persistent pulse — animation applied directly since nth-child stagger is on .card-wrap */
 .tax-card.red {
-    border-color: rgba(255, 77, 109, 0.48);
-    animation: fadeSlideUp 0.55s cubic-bezier(0.22,1,0.36,1) 0.43s both,
-               pulseGlowRed 3.4s ease-in-out 1.0s infinite;
+    border-color: rgba(255,77,109,0.48);
+    animation: pulseGlowRed 3.4s ease-in-out 0.9s infinite;
 }
-.tax-card.red:hover    { box-shadow: 0 10px 44px rgba(255, 77, 109, 0.36); }
+.card-wrap:hover .tax-card.red { box-shadow: 0 8px 36px rgba(255,77,109,0.34); }
 
-/* Field label row with animated colour dot */
+/* Field label with animated colour dot */
 .tax-card .field {
     color: var(--muted);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 7px;
+    font-size: 0.70rem; text-transform: uppercase;
+    letter-spacing: 0.08em; font-weight: 700;
+    display: flex; align-items: center; gap: 6px;
 }
-
 .tax-card .field::before {
     content: "";
-    display: inline-block;
-    width: 7px; height: 7px;
-    border-radius: 50%;
-    flex-shrink: 0;
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; flex-shrink: 0;
     animation: dotPulse 2.8s ease-in-out infinite;
 }
 .tax-card.blue   .field::before { background: var(--blue);   color: var(--blue);   animation-delay: 0.0s; }
@@ -306,64 +283,47 @@ section[data-testid="stSidebar"] label {
 
 .tax-card .value {
     color: var(--text);
-    font-size: 1.70rem;
-    line-height: 1.18;
-    font-weight: 800;
-    margin-top: 14px;
-    overflow-wrap: anywhere;
-    animation: countIn 0.5s ease-out 0.5s both;
+    font-size: 1.34rem; line-height: 1.15; font-weight: 800;
+    margin-top: 8px; overflow-wrap: anywhere;
+    animation: countIn 0.45s ease-out 0.45s both;
 }
-
 .tax-card .label {
     color: var(--muted);
-    font-size: 0.83rem;
-    margin-top: 8px;
-    line-height: 1.35;
+    font-size: 0.76rem; margin-top: 4px; line-height: 1.3;
 }
 
 /* ─── Status Strip ────────────────────────────────────────────────── */
 
 .status-strip {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin: 2px 0 20px;
+    display: flex; flex-wrap: wrap;
+    gap: 7px; margin: 0 0 10px;
 }
-
 .status-pill {
-    border-radius: 999px;
-    padding: 7px 14px;
-    font-size: 0.81rem;
-    font-weight: 600;
-    color: var(--text);
+    border-radius: 999px; padding: 4px 11px;
+    font-size: 0.75rem; font-weight: 600; color: var(--text);
     background: rgba(255,255,255,0.07);
     border: 1px solid rgba(255,255,255,0.10);
-    animation: popIn 0.45s cubic-bezier(0.22,1,0.36,1) both;
-    transition: background 0.18s, border-color 0.18s, transform 0.15s;
+    animation: popIn 0.4s cubic-bezier(0.22,1,0.36,1) both;
+    transition: background 0.16s, border-color 0.16s, transform 0.14s;
+    cursor: help;
 }
-.status-pill:nth-child(1) { animation-delay: 0.44s; }
-.status-pill:nth-child(2) { animation-delay: 0.52s; }
-.status-pill:nth-child(3) { animation-delay: 0.60s; }
-.status-pill:nth-child(4) { animation-delay: 0.68s; }
+.status-pill:nth-child(1) { animation-delay: 0.40s; }
+.status-pill:nth-child(2) { animation-delay: 0.47s; }
+.status-pill:nth-child(3) { animation-delay: 0.54s; }
+.status-pill:nth-child(4) { animation-delay: 0.61s; }
 .status-pill:hover {
     background: rgba(255,255,255,0.12);
     border-color: rgba(255,255,255,0.22);
-    transform: translateY(-2px);
+    transform: translateY(-1px);
 }
 
 /* ─── Section Divider ─────────────────────────────────────────────── */
 
 .section-divider {
     height: 1px;
-    background: linear-gradient(
-        90deg,
-        transparent 0%,
-        rgba(255,255,255,0.10) 25%,
-        rgba(255,255,255,0.10) 75%,
-        transparent 100%
-    );
-    margin: 20px 0;
-    animation: fadeSlideIn 0.5s ease-out 0.55s both;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.09) 25%, rgba(255,255,255,0.09) 75%, transparent);
+    margin: 10px 0;
+    animation: fadeSlideIn 0.4s ease-out 0.5s both;
 }
 
 /* ─── Native Metrics (breakdown expander) ─────────────────────────── */
@@ -371,89 +331,72 @@ section[data-testid="stSidebar"] label {
 div[data-testid="stMetric"] {
     background: rgba(21,26,35,0.70);
     border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 9px;
-    padding: 14px 16px;
+    border-radius: 8px; padding: 10px 13px;
     animation: fadeSlideUp 0.4s ease-out both;
-    transition: background 0.2s;
+    transition: background 0.18s;
 }
-div[data-testid="stMetric"]:hover {
-    background: rgba(21,26,35,0.90);
-}
+div[data-testid="stMetric"]:hover { background: rgba(21,26,35,0.90); }
 div[data-testid="stMetric"] label {
     color: var(--muted) !important;
-    font-size: 0.76rem !important;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: 700 !important;
+    font-size: 0.72rem !important;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700 !important;
 }
 div[data-testid="stMetricValue"] > div {
     color: var(--text) !important;
-    font-size: 1.28rem !important;
-    font-weight: 800 !important;
+    font-size: 1.15rem !important; font-weight: 800 !important;
 }
 
 /* ─── Data Tables ─────────────────────────────────────────────────── */
 
 div[data-testid="stDataFrame"] {
     border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 10px;
-    overflow: hidden;
-    animation: fadeSlideUp 0.45s ease-out 0.2s both;
+    border-radius: 9px; overflow: hidden;
+    animation: fadeSlideUp 0.4s ease-out 0.2s both;
 }
 
 /* ─── Expander ────────────────────────────────────────────────────── */
 
 div[data-testid="stExpander"] {
     border: 1px solid rgba(255,255,255,0.08) !important;
-    border-radius: 10px !important;
-    background: rgba(21,26,35,0.60) !important;
+    border-radius: 9px !important;
+    background: rgba(21,26,35,0.55) !important;
     animation: fadeSlideUp 0.4s ease-out 0.3s both;
 }
 
 /* ─── Alerts ──────────────────────────────────────────────────────── */
 
 div[data-testid="stAlert"] {
-    border-radius: 9px;
-    animation: fadeSlideUp 0.4s ease-out 0.1s both;
+    border-radius: 8px;
+    animation: fadeSlideUp 0.35s ease-out 0.1s both;
 }
 
 /* ─── Buttons ─────────────────────────────────────────────────────── */
 
-.stDownloadButton button,
-.stButton button {
-    border-radius: 8px;
-    border: 1px solid rgba(0, 212, 255, 0.40);
-    background: rgba(0, 212, 255, 0.08);
-    color: var(--text);
-    font-weight: 700;
-    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+.stDownloadButton button, .stButton button {
+    border-radius: 7px;
+    border: 1px solid rgba(0,212,255,0.38);
+    background: rgba(0,212,255,0.08);
+    color: var(--text); font-weight: 700; font-size: 0.84rem;
+    transition: background 0.18s, border-color 0.18s, box-shadow 0.18s, transform 0.14s;
 }
-.stDownloadButton button:hover,
-.stButton button:hover {
-    border-color: var(--blue);
-    color: var(--blue);
-    background: rgba(0, 212, 255, 0.13);
-    box-shadow: 0 0 20px rgba(0, 212, 255, 0.22);
-    transform: translateY(-2px);
+.stDownloadButton button:hover, .stButton button:hover {
+    border-color: var(--blue); color: var(--blue);
+    background: rgba(0,212,255,0.12);
+    box-shadow: 0 0 18px rgba(0,212,255,0.20);
+    transform: translateY(-1px);
 }
-.stDownloadButton button:active,
-.stButton button:active { transform: translateY(0); }
+.stDownloadButton button:active, .stButton button:active { transform: translateY(0); }
 
 /* ─── Spinner ─────────────────────────────────────────────────────── */
 
-div[data-testid="stSpinner"] {
-    animation: fadeSlideUp 0.3s ease-out both;
-}
+div[data-testid="stSpinner"] { animation: fadeSlideUp 0.3s ease-out both; }
 
 /* ─── Footer ──────────────────────────────────────────────────────── */
 
 .kest-footer {
-    margin-top: 40px;
-    padding-top: 16px;
+    margin-top: 24px; padding-top: 12px;
     border-top: 1px solid rgba(255,255,255,0.07);
-    color: var(--muted);
-    font-size: 0.78rem;
-    text-align: center;
+    color: var(--muted); font-size: 0.74rem; text-align: center;
     animation: fadeSlideUp 0.4s ease-out 0.6s both;
 }
 </style>
