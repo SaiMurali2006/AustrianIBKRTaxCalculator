@@ -393,7 +393,7 @@ def render_performance(result) -> None:
 
 
 def _perf_data(result) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    audit = result.audit.copy()
+    audit = result.audit[result.audit["category"].isin(["STK", "OPT"])].copy()
     audit["_date"] = pd.to_datetime(audit["date"], format="%Y%m%d", errors="coerce")
     audit["realized_pnl_eur"] = pd.to_numeric(audit["realized_pnl_eur"], errors="coerce").fillna(0.0)
     audit["commission_eur"] = pd.to_numeric(audit["commission_eur"], errors="coerce").fillna(0.0)

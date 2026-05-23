@@ -40,13 +40,18 @@ def parse(source: str | Path | bytes) -> ParsedData:
         cash_df["type"] = cash_df["type"].fillna("")
         cash_df["description"] = cash_df["description"].fillna("")
 
-    funds = trades_df[trades_df["assetCategory"].eq("FUND")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
+    _known = {"STK", "OPT", "FOP", "WAR", "IOPT", "FUND"}
     stocks = trades_df[trades_df["assetCategory"].eq("STK")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
     options = (
         trades_df[trades_df["assetCategory"].isin(["OPT", "FOP", "WAR", "IOPT"])].copy()
         if not trades_df.empty
         else _empty(TRADE_COLUMNS)
     )
+    # Unknown categories (FUT, BOND, CASH/FX, etc.) are routed to the manual review queue
+    # so they are never silently excluded from the user's attention.
+    _fund_rows = trades_df[trades_df["assetCategory"].eq("FUND")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
+    _unknown_rows = trades_df[~trades_df["assetCategory"].isin(_known)].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
+    funds = pd.concat([_fund_rows, _unknown_rows], ignore_index=True)
 
     dividends = _cash_filter(cash_df, ["dividend", "payment in lieu", "withholding"])
     interest = _cash_filter(cash_df, ["interest"])

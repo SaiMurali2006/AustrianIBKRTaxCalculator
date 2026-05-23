@@ -101,7 +101,9 @@ class DerivativeProcessor:
             trade_date = str(trade["date"])
             proceeds = float(trade["proceeds"])
             commission = float(trade["ibCommission"])
-            pnl_original = float(trade["fifoPnlRealized"]) or proceeds + commission
+            fifo_pnl = float(trade["fifoPnlRealized"])
+            open_close = str(trade.get("openCloseIndicator", "")).upper()
+            pnl_original = fifo_pnl if fifo_pnl != 0.0 else (proceeds + commission if "C" in open_close else 0.0)
             pnl_eur, fx = self.fx_provider.convert(pnl_original, currency, trade_date, trade.get("fxRateToBase"))
             total += pnl_eur
             rows.append(
@@ -137,7 +139,7 @@ class TaxAggregator:
         stock_total, stock_audit = CapitalGainsProcessor(self.fx_provider).process(parsed.stocks)
         option_total, option_audit = DerivativeProcessor(self.fx_provider).process(parsed.options)
         dividend_total, withholding_total, dividend_audit = self._cash_income(parsed.dividends, "DIV", "862")
-        interest_total, interest_tax, interest_audit = self._cash_income(parsed.interest, "INT", "777")
+        interest_total, interest_tax, interest_audit = self._cash_income(parsed.interest, "INT", "863")
         foreign_tax_credit = abs(withholding_total + interest_tax)
 
         basket_income = stock_total + option_total + dividend_total + interest_total
