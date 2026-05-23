@@ -2,9 +2,7 @@
 
 ## Project Purpose
 
-Streamlit dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt, 27.5%), and maps results to E1kv tax form fields. Designed for IBKR Flex Query XML exports today; the architecture is broker-agnostic by intent.
-
-**Primary goal:** maximum modularity so new broker statement formats can be added without touching the tax engine or UI.
+Streamlit dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt, 27.5%), and maps results to E1kv tax form fields. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
 
 ---
 
@@ -13,21 +11,21 @@ Streamlit dashboard that ingests brokerage statement data, calculates Austrian c
 ```
 Broker Statement (any format)
         ↓
-  Broker Parser  (one per broker, lives in parsers/)
+  parsers/<broker>.py   parse(source) → ParsedData
         ↓
-  ParsedFlexData  (canonical data contract — shared across all brokers)
+  models.ParsedData     canonical data contract
         ↓
-  Tax Engine  (tax_engine.py — broker-unaware)
-        ├── CapitalGainsProcessor   (stocks, moving-average cost basis)
-        ├── DerivativeProcessor     (options/FOP/warrants)
-        └── TaxAggregator           (orchestrator + E1kv field mapping)
+  tax_engine.TaxAggregator
+        ├── CapitalGainsProcessor   stocks, moving-average cost basis
+        ├── DerivativeProcessor     options / FOP / warrants
+        └── _cash_income            dividends, interest, withholding
         ↓
-  TaxResult  (output contract)
+  models.TaxResult
         ↓
-  Streamlit UI  (app.py — result-unaware of source broker)
+  app.py   Streamlit UI (broker selector → parse → calculate → render)
 ```
 
-The canonical boundary is `ParsedFlexData`. Any broker parser must produce this object. The tax engine and UI must never import broker-specific code.
+The canonical boundary is `models.ParsedData`. Any broker parser must produce this object. The tax engine and UI must never import broker-specific code.
 
 ---
 
@@ -35,49 +33,72 @@ The canonical boundary is `ParsedFlexData`. Any broker parser must produce this 
 
 | File | Role | May import |
 |---|---|---|
-| `app.py` | Streamlit UI, file upload, rendering | `parser.py`, `tax_engine.py`, `styles.py` |
-| `parser.py` | IBKR Flex XML → `ParsedFlexData` | `currency_provider.py` |
-| `tax_engine.py` | `ParsedFlexData` → `TaxResult` | `currency_provider.py` |
+| `models.py` | `ParsedData`, `TaxResult`, column constants | stdlib, pandas |
+| `parsers/__init__.py` | `BROKER_REGISTRY`, `BROKER_SAMPLES`, `get_parser()` | `models`, `.ibkr_flex` |
+| `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML` | `models`, stdlib, pandas |
+| `tax_engine.py` | `ParsedData` → `TaxResult`; broker-agnostic | `models`, `currency_provider` |
 | `currency_provider.py` | EUR conversion, ECB cache | stdlib only |
+| `app.py` | Streamlit UI, broker selector, rendering | `parsers`, `tax_engine`, `styles`, `currency_provider` |
 | `styles.py` | Dark FinTech CSS string | nothing |
-| `smoke_test.py` | Quick sanity check | `parser.py`, `tax_engine.py` |
+| `smoke_test.py` | Quick sanity check | `parsers`, `tax_engine` |
 
 ---
 
 ## Adding a New Broker
 
-1. Create `parsers/<broker_slug>.py` (e.g., `parsers/ibkr_flex.py`, `parsers/degiro.py`).
-2. The module must expose exactly one public function: `parse(source) -> ParsedFlexData`.
-3. The `source` argument should accept `bytes | str | Path` (same contract as the current `parse_flex_xml`).
-4. Populate `ParsedFlexData` fields — see the dataclass in `parser.py` for the canonical schema.
-5. Register the parser in `app.py`'s broker selector (one `if/elif` block or a dict dispatch).
-6. Do **not** add broker-specific logic anywhere outside that file.
+1. Create `parsers/<broker_slug>.py` (e.g., `parsers/degiro.py`).
+2. Expose exactly one public function: `parse(source: str | Path | bytes) -> ParsedData`.
+3. Populate all `ParsedData` fields — see `models.py` for the schema.
+4. In `parsers/__init__.py`, add one entry to `BROKER_REGISTRY` and (optionally) `BROKER_SAMPLES`.
 
-When the refactor to `parsers/` happens, `parser.py` becomes `parsers/ibkr_flex.py` and `parser.py` re-exports `parse_flex_xml` as a shim until callers are updated.
+That's it. The tax engine and UI require no changes.
 
 ---
 
-## Canonical Data Contract — `ParsedFlexData`
+## Canonical Data Contract — `models.ParsedData`
 
-Defined in `parser.py`. All broker parsers must produce this.
+All broker parsers must produce this dataclass. The tax engine reads only these fields.
 
 ```python
 @dataclass
-class ParsedFlexData:
-    stocks: pd.DataFrame       # assetCategory in {STK}
-    derivatives: pd.DataFrame  # assetCategory in {OPT, FOP, WAR, IOPT}
-    funds: pd.DataFrame        # assetCategory in {FUND} — flagged for manual review
-    dividends: pd.DataFrame    # cash: type matches dividend keywords
-    interest: pd.DataFrame     # cash: type matches interest keywords
-    withholding: pd.DataFrame  # cash: type matches withholding keywords
-    other_cash: pd.DataFrame   # everything else
+class ParsedData:
+    stocks: pd.DataFrame       # TRADE_COLUMNS, assetCategory == STK
+    options: pd.DataFrame      # TRADE_COLUMNS, assetCategory in {OPT, FOP, WAR, IOPT}
+    funds: pd.DataFrame        # TRADE_COLUMNS, assetCategory == FUND (manual review queue)
+    dividends: pd.DataFrame    # CASH_COLUMNS, matched by dividend/withholding keywords
+    interest: pd.DataFrame     # CASH_COLUMNS, matched by interest keywords
+    cash_other: pd.DataFrame   # CASH_COLUMNS, everything else
+    all_trades: pd.DataFrame   # TRADE_COLUMNS, unfiltered
+    all_cash: pd.DataFrame     # CASH_COLUMNS, unfiltered
 ```
 
-**Required columns per trade DataFrame:** `date`, `symbol`, `isin`, `currency`, `fxRateToBase`, `quantity`, `tradePrice`, `ibCommission`, `proceeds`, `buySell`, `assetCategory`, `description`, `fifoPnlRealized`
+**`TRADE_COLUMNS`** (defined in `models.py`):
+`date`, `datetime`, `currency`, `fxRateToBase`, `assetCategory`, `symbol`, `description`, `isin`, `quantity`, `tradePrice`, `proceeds`, `ibCommission`, `openCloseIndicator`, `cost`, `fifoPnlRealized`, `buySell`
 
-**Required columns per cash DataFrame:** `date`, `symbol`, `isin`, `currency`, `fxRateToBase`, `amount`, `description`, `type`
+**`CASH_COLUMNS`** (defined in `models.py`):
+`date`, `datetime`, `currency`, `fxRateToBase`, `symbol`, `description`, `isin`, `amount`, `type`, `tax`
 
-Missing optional columns should be filled with `None` / `0.0` — never raise on missing fields.
+Missing optional fields should be `None` / `0.0` — never raise on missing input.
+
+---
+
+## Broker Registry
+
+Defined in `parsers/__init__.py`:
+
+```python
+BROKER_REGISTRY: dict[str, Callable[[str | Path | bytes], ParsedData]] = {
+    "IBKR Flex XML": _ibkr_parse,
+    # "Degiro CSV": _degiro_parse,  ← add new brokers here
+}
+
+BROKER_SAMPLES: dict[str, str] = {
+    "IBKR Flex XML": _IBKR_SAMPLE,
+    # "Degiro CSV": _DEGIRO_SAMPLE,
+}
+```
+
+The UI populates its broker `selectbox` directly from `BROKER_REGISTRY.keys()`. No UI code needs to change when adding a broker.
 
 ---
 
@@ -113,41 +134,39 @@ Funds (`FUND`) are routed to `manual_processing` queue, not calculated automatic
 3. Fetch from ECB API (90-day window, 8s timeout)
 4. Nearest prior business day in cache
 5. IBKR `fxRateToBase` fallback
-6. 1.0 with source `"Missing FX rate fallback"` (never crashes)
+6. 1.0 with source `"Missing FX rate fallback"` — never crashes
 
-Cache lives at `.cache/ecb_rates.json`. It is excluded from git (`.gitignore`).
-
-Every converted value carries a `FxRate` record (rate, date, currency, source) for audit trail transparency.
+Cache lives at `.cache/ecb_rates.json` (gitignored). Every converted value carries a `FxRate` record for the audit trail.
 
 ---
 
 ## Naming Conventions
 
-- **Functions / variables:** `snake_case`
-- **Private helpers:** leading underscore (`_load_xml`, `_normalise_trade`, `_num`)
-- **Classes:** `PascalCase`
-- **DataFrame column suffixes:** `_eur` for converted amounts, `_original` for source-currency values
-- **DataFrame column state tracking:** `old_*`, `new_*` (e.g., `old_avg_cost_eur`, `new_quantity`)
-- **Asset categories:** `UPPERCASE` strings matching IBKR codes (`STK`, `OPT`, `FUND`, …)
-- **E1kv fields:** string literals (`"861"`, `"775"`, …) — never integers
+- Functions / variables: `snake_case`
+- Private helpers: leading underscore (`_load_xml`, `_normalise_trade`, `_num`)
+- Classes: `PascalCase`
+- DataFrame column suffixes: `_eur` for converted amounts, `_original` for source-currency
+- State-tracking columns: `old_*`, `new_*` (e.g., `old_avg_cost_eur`, `new_quantity`)
+- Asset categories: `UPPERCASE` strings matching IBKR codes (`STK`, `OPT`, `FUND`, …)
+- E1kv fields: string literals (`"861"`, `"775"`, …) — never integers
 
 ---
 
 ## Error Handling Rules
 
-- **Never raise on bad input values** — use `_num()` pattern (returns `0.0` on invalid float) and `parse_ib_date()` (returns `None` on bad format).
-- **Never raise on missing FX rates** — fall through the resolution chain, log source as `"Missing FX rate fallback"`.
-- **Empty DataFrames are valid input** — every processor must return `(0.0, empty_df)` gracefully.
-- **Network failures are non-fatal** — ECB fetch is wrapped in try/except; the app must work fully offline with cached rates.
-- Validation at system boundaries only: XML upload, ECB API response. No defensive checks on internal dataclass fields.
+- Never raise on bad input values — use `_num()` pattern (returns `0.0` on invalid float).
+- Never raise on missing FX rates — fall through the resolution chain.
+- Empty DataFrames are valid input — every processor returns `(0.0, empty_df)` gracefully.
+- Network failures are non-fatal — ECB fetch wrapped in try/except; app works fully offline.
+- Validate only at system boundaries (XML upload, ECB API response).
 
 ---
 
 ## UI / Styling
 
-Dark FinTech theme defined entirely in `styles.py`. The CSS string is injected via `st.markdown(..., unsafe_allow_html=True)` at app start.
+Dark FinTech theme defined entirely in `styles.py`. Injected via `st.markdown(..., unsafe_allow_html=True)`.
 
-Category → accent color mapping:
+Category → accent color:
 
 | Category | Color | Hex |
 |---|---|---|
@@ -157,7 +176,7 @@ Category → accent color mapping:
 | ETF / Funds | Gold | `#FFD700` |
 | Tax due | Red | `#FF4D6D` |
 
-CSS classes to reuse: `.metric-card`, `.metric-grid`, `.status-pill`, `.fintech-btn`. Do not add inline styles to `app.py` — all visual rules belong in `styles.py`.
+CSS classes: `.metric-card`, `.metric-grid`, `.status-pill`, `.fintech-btn`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
 
 ---
 
@@ -168,7 +187,7 @@ CSS classes to reuse: `.metric-card`, `.metric-grid`, `.status-pill`, `.fintech-
 - No comments unless the *why* is non-obvious (hidden constraint, workaround, legal requirement).
 - No docstrings beyond a single-line module docstring and brief class docstrings.
 - No logging module — Streamlit surfaces status; audit trail is the paper trail.
-- Pandas for all tabular data; no custom loop-based aggregations when a vectorized operation exists.
+- Pandas for all tabular data; no custom loop-based aggregations when a vectorized op exists.
 
 ---
 
@@ -179,7 +198,7 @@ pandas>=2.2
 streamlit>=1.35
 ```
 
-Standard library only beyond these two. Do not add dependencies without a strong reason — especially no heavy ML or financial libraries.
+Standard library only beyond these two. Do not add dependencies without a strong reason.
 
 ---
 
@@ -190,7 +209,7 @@ Standard library only beyond these two. Do not add dependencies without a strong
 streamlit run app.py
 ```
 
-Smoke test (no Streamlit, pure Python):
+Smoke test (no Streamlit):
 
 ```powershell
 python smoke_test.py
@@ -206,3 +225,4 @@ python smoke_test.py
 - Do not store secrets in code — use `.streamlit/secrets.toml` (gitignored).
 - Do not commit `.cache/`, generated CSV reports, or `venv/`.
 - Do not add E1kv field mapping outside `tax_engine.py`.
+- Do not import from `parsers/ibkr_flex.py` directly — always go through `parsers.get_parser()`.

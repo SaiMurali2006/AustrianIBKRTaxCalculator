@@ -6,28 +6,14 @@ import pandas as pd
 import streamlit as st
 
 from currency_provider import ECBRateProvider
-from parser import parse_flex_xml
+from parsers import BROKER_REGISTRY, BROKER_SAMPLES, get_parser
 from styles import FINTECH_CSS
 from tax_engine import TaxAggregator
 
 
-SAMPLE_XML = """<FlexQueryResponse>
-    <FlexStatements>
-        <FlexStatement>
-            <Trades>
-                <Trade currency="USD" fxRateToBase="0.84775" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" dateTime="20260414;145843" settleDateTarget="20260415" quantity="54" tradePrice="257.97" proceeds="-13930.38" ibCommission="-1" openCloseIndicator="O" cost="13931.38" fifoPnlRealized="0" buySell="BUY"/>
-            </Trades>
-            <CashTransactions>
-                <CashTransaction currency="EUR" fxRateToBase="1" symbol="" description="CASH RECEIPTS / ELECTRONIC FUND TRANSFERS" securityID="" isin="" dateTime="20260412" settleDate="20260412" amount="1000" type="Deposits/Withdrawals"/>
-            </CashTransactions>
-        </FlexStatement>
-    </FlexStatements>
-</FlexQueryResponse>"""
-
-
 def main() -> None:
     st.set_page_config(
-        page_title="Austrian IBKR Tax Engine",
+        page_title="Austrian KESt Tax Engine",
         page_icon="EUR",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -35,18 +21,21 @@ def main() -> None:
     st.markdown(FINTECH_CSS, unsafe_allow_html=True)
 
     with st.sidebar:
-        st.title("IBKR KESt Engine")
+        st.title("KESt Engine")
+        broker = st.selectbox("Broker", list(BROKER_REGISTRY))
         view = st.radio("View", ["Executive Summary", "Detailed Audit Trail"], label_visibility="collapsed")
-        uploaded = st.file_uploader("Upload IBKR Flex XML", type=["xml"])
-        use_sample = st.toggle("Use embedded sample", value=uploaded is None)
+        uploaded = st.file_uploader(f"Upload {broker} statement", type=["xml"])
+        sample_available = broker in BROKER_SAMPLES
+        use_sample = st.toggle("Use embedded sample", value=uploaded is None, disabled=not sample_available)
         export_clicked = st.button("Generate CSV Exports")
 
-    xml_payload = uploaded.getvalue() if uploaded else SAMPLE_XML if use_sample else None
+    xml_payload = uploaded.getvalue() if uploaded else (BROKER_SAMPLES[broker] if use_sample and sample_available else None)
+
     st.markdown(
         """
         <div class="tax-hero">
             <div class="eyebrow">Austria E1kv Digital Tax Report</div>
-            <div class="title">IBKR Capital Gains Tax Dashboard</div>
+            <div class="title">Capital Gains Tax Dashboard</div>
             <div class="subtitle">Stocks, options, dividends, interest and foreign withholding tax mapped into Austrian E1kv fields with EUR conversion and loss offsetting inside the 27.5% basket.</div>
         </div>
         """,
@@ -54,14 +43,14 @@ def main() -> None:
     )
 
     if not xml_payload:
-        st.info("Upload a Flex Query XML or enable the embedded sample.")
+        st.info("Upload a statement file or enable the embedded sample.")
         return
 
-    parsed = parse_flex_xml(xml_payload)
+    parsed = get_parser(broker)(xml_payload)
     result = TaxAggregator(ECBRateProvider()).run(parsed)
 
     if export_clicked:
-        paths = TaxAggregator.export_reports(result)
+        TaxAggregator.export_reports(result)
         st.success("CSV exports generated: E1kv_Report_2026.csv, transaction_audit.csv, manual_processing_required.csv")
 
     if view == "Executive Summary":
@@ -137,7 +126,7 @@ def render_audit(result) -> None:
     st.subheader("Detailed Audit Trail")
     st.caption("Shows trade dates, EUR conversion rates, cost-basis evolution, and realized P/L per line.")
     if result.audit.empty:
-        st.info("No taxable trade or cash income rows found in the uploaded XML.")
+        st.info("No taxable trade or cash income rows found in the uploaded statement.")
     else:
         st.dataframe(result.audit, use_container_width=True, hide_index=True)
         st.download_button(
@@ -172,4 +161,3 @@ def _csv_bytes(df: pd.DataFrame) -> bytes:
 
 if __name__ == "__main__":
     main()
-

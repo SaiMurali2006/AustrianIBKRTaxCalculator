@@ -1,61 +1,31 @@
-"""IBKR Flex XML parser for Austrian tax categories."""
+"""IBKR Flex XML parser — produces the canonical ParsedData contract."""
 
 from __future__ import annotations
 
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
 
 import pandas as pd
 
-
-TRADE_COLUMNS = [
-    "date",
-    "datetime",
-    "currency",
-    "fxRateToBase",
-    "assetCategory",
-    "symbol",
-    "description",
-    "isin",
-    "quantity",
-    "tradePrice",
-    "proceeds",
-    "ibCommission",
-    "openCloseIndicator",
-    "cost",
-    "fifoPnlRealized",
-    "buySell",
-]
-
-CASH_COLUMNS = [
-    "date",
-    "datetime",
-    "currency",
-    "fxRateToBase",
-    "symbol",
-    "description",
-    "isin",
-    "amount",
-    "type",
-    "tax",
-]
+from models import CASH_COLUMNS, TRADE_COLUMNS, ParsedData
 
 
-@dataclass
-class ParsedFlexData:
-    stocks: pd.DataFrame
-    options: pd.DataFrame
-    dividends: pd.DataFrame
-    interest: pd.DataFrame
-    funds: pd.DataFrame
-    cash_other: pd.DataFrame
-    all_trades: pd.DataFrame
-    all_cash: pd.DataFrame
+SAMPLE_XML = """<FlexQueryResponse>
+    <FlexStatements>
+        <FlexStatement>
+            <Trades>
+                <Trade currency="USD" fxRateToBase="0.84775" assetCategory="STK" symbol="AAPL" description="APPLE INC" isin="US0378331005" dateTime="20260414;145843" settleDateTarget="20260415" quantity="54" tradePrice="257.97" proceeds="-13930.38" ibCommission="-1" openCloseIndicator="O" cost="13931.38" fifoPnlRealized="0" buySell="BUY"/>
+            </Trades>
+            <CashTransactions>
+                <CashTransaction currency="EUR" fxRateToBase="1" symbol="" description="CASH RECEIPTS / ELECTRONIC FUND TRANSFERS" securityID="" isin="" dateTime="20260412" settleDate="20260412" amount="1000" type="Deposits/Withdrawals"/>
+            </CashTransactions>
+        </FlexStatement>
+    </FlexStatements>
+</FlexQueryResponse>"""
 
 
-def parse_flex_xml(source: str | Path | bytes) -> ParsedFlexData:
+def parse(source: str | Path | bytes) -> ParsedData:
     root = _load_xml(source)
     trades = [_normalise_trade(node.attrib) for node in root.findall(".//Trade")]
     cash = [_normalise_cash(node.attrib) for node in root.findall(".//CashTransaction")]
@@ -72,13 +42,21 @@ def parse_flex_xml(source: str | Path | bytes) -> ParsedFlexData:
 
     funds = trades_df[trades_df["assetCategory"].eq("FUND")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
     stocks = trades_df[trades_df["assetCategory"].eq("STK")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
-    options = trades_df[trades_df["assetCategory"].isin(["OPT", "FOP", "WAR", "IOPT"])].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
+    options = (
+        trades_df[trades_df["assetCategory"].isin(["OPT", "FOP", "WAR", "IOPT"])].copy()
+        if not trades_df.empty
+        else _empty(TRADE_COLUMNS)
+    )
 
     dividends = _cash_filter(cash_df, ["dividend", "payment in lieu", "withholding"])
     interest = _cash_filter(cash_df, ["interest"])
-    cash_other = cash_df.drop(index=dividends.index.union(interest.index), errors="ignore").copy() if not cash_df.empty else _empty(CASH_COLUMNS)
+    cash_other = (
+        cash_df.drop(index=dividends.index.union(interest.index), errors="ignore").copy()
+        if not cash_df.empty
+        else _empty(CASH_COLUMNS)
+    )
 
-    return ParsedFlexData(
+    return ParsedData(
         stocks=stocks.reset_index(drop=True),
         options=options.reset_index(drop=True),
         dividends=dividends.reset_index(drop=True),
@@ -156,4 +134,3 @@ def _num(value: str | None) -> float:
         return float(value)
     except ValueError:
         return 0.0
-

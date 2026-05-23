@@ -1,9 +1,9 @@
-from parser import parse_flex_xml
+from parsers import get_parser
 from tax_engine import TaxAggregator
 
 
 def test_sample_runs():
-    parsed = parse_flex_xml("sample_flex.xml")
+    parsed = get_parser("IBKR Flex XML")("sample_flex.xml")
     result = TaxAggregator().run(parsed)
     assert "861" in result.e1kv_fields
     assert "775" in result.e1kv_fields

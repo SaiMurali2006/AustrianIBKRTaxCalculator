@@ -1,27 +1,16 @@
-"""Austrian KESt engine for IBKR Flex data."""
+"""Austrian KESt engine — broker-agnostic, operates on ParsedData."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 
 from currency_provider import ECBRateProvider
+from models import ParsedData, TaxResult
 
 
 KEST_RATE = 0.275
-
-
-@dataclass
-class TaxResult:
-    e1kv_fields: dict[str, float]
-    category_totals: dict[str, float]
-    audit: pd.DataFrame
-    manual_processing: pd.DataFrame
-    taxable_base: float
-    tax_due: float
-    foreign_tax_credit: float
 
 
 class CapitalGainsProcessor:
@@ -144,7 +133,7 @@ class TaxAggregator:
     def __init__(self, fx_provider: ECBRateProvider | None = None) -> None:
         self.fx_provider = fx_provider or ECBRateProvider()
 
-    def run(self, parsed) -> TaxResult:
+    def run(self, parsed: ParsedData) -> TaxResult:
         stock_total, stock_audit = CapitalGainsProcessor(self.fx_provider).process(parsed.stocks)
         option_total, option_audit = DerivativeProcessor(self.fx_provider).process(parsed.options)
         dividend_total, withholding_total, dividend_audit = self._cash_income(parsed.dividends, "DIV", "862")
