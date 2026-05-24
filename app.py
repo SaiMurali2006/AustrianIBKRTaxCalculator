@@ -64,6 +64,16 @@ def main() -> None:
             disabled=not sample_available,
             help="Load a built-in demonstration file to preview the dashboard without a real statement.",
         )
+        include_fees = st.toggle(
+            "Include fees in tax basis",
+            value=False,
+            help=(
+                "OFF (default) — Austrian private account rules (§ 20 Abs. 2 EStG): "
+                "brokerage commissions are non-deductible and excluded from taxable gain calculations. "
+                "ON — fees are included in cost basis and proceeds (use for business accounts or non-Austrian jurisdictions). "
+                "Either way, the fee amount is always visible in the Detailed Audit Trail."
+            ),
+        )
         export_clicked = st.button(
             "Generate CSV Exports",
             help="Saves E1kv_Report_2026.csv, transaction_audit.csv, and manual_processing_required.csv to the current directory.",
@@ -89,12 +99,12 @@ def main() -> None:
         st.info("Upload a statement file or enable the embedded sample.")
         return
 
-    # Content-hash keyed cache — avoids re-parsing on view switches; auto-invalidates on new file or broker change
-    cache_key = hashlib.md5(xml_payload if isinstance(xml_payload, bytes) else xml_payload.encode()).hexdigest() + broker
+    # Content-hash keyed cache — auto-invalidates on new file, broker change, or fee-mode change
+    cache_key = hashlib.md5(xml_payload if isinstance(xml_payload, bytes) else xml_payload.encode()).hexdigest() + broker + ("F" if include_fees else "N")
     if cache_key not in st.session_state:
         with st.spinner("Parsing statement and calculating KeSt…"):
             parsed = get_parser(broker)(xml_payload)
-            result = TaxAggregator(ECBRateProvider()).run(parsed)
+            result = TaxAggregator(ECBRateProvider(), include_fees=include_fees).run(parsed)
             st.session_state[cache_key] = (parsed, result)
 
     parsed, result = st.session_state[cache_key]
@@ -104,14 +114,14 @@ def main() -> None:
         st.success("CSV exports generated: E1kv_Report_2026.csv, transaction_audit.csv, manual_processing_required.csv")
 
     if view == "Executive Summary":
-        render_summary(result, parsed)
+        render_summary(result, parsed, include_fees)
     elif view == "Performance":
         render_performance(result)
     else:
         render_audit(result)
 
 
-def render_summary(result, parsed) -> None:
+def render_summary(result, parsed, include_fees: bool = False) -> None:
     # All six cards rendered in one HTML block so they actually live inside the CSS grid.
     field_cards = [
         (
@@ -170,6 +180,13 @@ def render_summary(result, parsed) -> None:
             "- [E1kv form and instructions — bmf.gv.at](https://www.bmf.gv.at/dam/jcr:e1kv-formular)\n"
         )
 
+    fee_pill_label = "Fees: included in basis" if include_fees else "Fees: excluded (§20 Abs. 2 EStG)"
+    fee_pill_tip = (
+        "Brokerage commissions are included in the cost basis and proceeds (business-account mode)."
+        if include_fees
+        else "Brokerage commissions are excluded from taxable gain calculations per Austrian private account rules (§ 20 Abs. 2 EStG). "
+             "Fee amounts remain visible in the Detailed Audit Trail."
+    )
     st.markdown(
         f"""
         <div class="status-strip">
@@ -188,6 +205,9 @@ def render_summary(result, parsed) -> None:
             <div class="status-pill"
                  title="ETF and fund rows flagged for manual OeKB review. Austrian fund taxation requires per-fund reporting and is not calculated automatically.">
                 Manual fund rows: {len(parsed.funds)}
+            </div>
+            <div class="status-pill" title="{fee_pill_tip}">
+                {fee_pill_label}
             </div>
         </div>
         """,

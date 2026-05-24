@@ -16,8 +16,9 @@ KEST_RATE = 0.275
 class CapitalGainsProcessor:
     """Moving-average stock processor following Austrian average cost logic."""
 
-    def __init__(self, fx_provider: ECBRateProvider) -> None:
+    def __init__(self, fx_provider: ECBRateProvider, include_fees: bool = False) -> None:
         self.fx_provider = fx_provider
+        self.include_fees = include_fees
         self.positions: dict[str, dict[str, float]] = {}
 
     def process(self, trades: pd.DataFrame) -> tuple[float, pd.DataFrame]:
@@ -45,11 +46,13 @@ class CapitalGainsProcessor:
 
             if action == "BUY":
                 old_total_cost = old_qty * old_avg
-                new_total_cost = old_total_cost + (qty * price_eur) + commission_eur
+                fee_buy = commission_eur if self.include_fees else 0.0
+                new_total_cost = old_total_cost + (qty * price_eur) + fee_buy
                 position["qty"] = old_qty + qty
                 position["avg_cost"] = new_total_cost / position["qty"] if position["qty"] else 0.0
             else:
-                sale_proceeds = (qty * price_eur) - commission_eur
+                fee_sell = commission_eur if self.include_fees else 0.0
+                sale_proceeds = (qty * price_eur) - fee_sell
                 cost_basis = qty * old_avg
                 realized = sale_proceeds - cost_basis
                 realized_total += realized
@@ -87,8 +90,9 @@ class CapitalGainsProcessor:
 class DerivativeProcessor:
     """Realized P&L processor for IBKR option and derivative trades."""
 
-    def __init__(self, fx_provider: ECBRateProvider) -> None:
+    def __init__(self, fx_provider: ECBRateProvider, include_fees: bool = False) -> None:
         self.fx_provider = fx_provider
+        self.include_fees = include_fees
 
     def process(self, trades: pd.DataFrame) -> tuple[float, pd.DataFrame]:
         rows: list[dict[str, object]] = []
@@ -103,7 +107,13 @@ class DerivativeProcessor:
             commission = float(trade["ibCommission"])
             fifo_pnl = float(trade["fifoPnlRealized"])
             open_close = str(trade.get("openCloseIndicator", "")).upper()
-            pnl_original = fifo_pnl if fifo_pnl != 0.0 else (proceeds + commission if "C" in open_close else 0.0)
+            if fifo_pnl != 0.0:
+                # IBKR's fifoPnlRealized is net of commission; strip it back out for Austrian private accounts.
+                pnl_original = fifo_pnl if self.include_fees else fifo_pnl - commission
+            elif "C" in open_close:
+                pnl_original = proceeds + commission if self.include_fees else proceeds
+            else:
+                pnl_original = 0.0
             pnl_eur, fx = self.fx_provider.convert(pnl_original, currency, trade_date, trade.get("fxRateToBase"))
             total += pnl_eur
             rows.append(
@@ -132,12 +142,13 @@ class DerivativeProcessor:
 
 
 class TaxAggregator:
-    def __init__(self, fx_provider: ECBRateProvider | None = None) -> None:
+    def __init__(self, fx_provider: ECBRateProvider | None = None, include_fees: bool = False) -> None:
         self.fx_provider = fx_provider or ECBRateProvider()
+        self.include_fees = include_fees
 
     def run(self, parsed: ParsedData) -> TaxResult:
-        stock_total, stock_audit = CapitalGainsProcessor(self.fx_provider).process(parsed.stocks)
-        option_total, option_audit = DerivativeProcessor(self.fx_provider).process(parsed.options)
+        stock_total, stock_audit = CapitalGainsProcessor(self.fx_provider, self.include_fees).process(parsed.stocks)
+        option_total, option_audit = DerivativeProcessor(self.fx_provider, self.include_fees).process(parsed.options)
         dividend_total, withholding_total, dividend_audit = self._cash_income(parsed.dividends, "DIV", "862")
         interest_total, interest_tax, interest_audit = self._cash_income(parsed.interest, "INT", "863")
         foreign_tax_credit = abs(withholding_total + interest_tax)

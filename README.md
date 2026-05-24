@@ -113,7 +113,9 @@ Then open the local URL shown in the terminal.
    - Monthly breakdown of gains, fees, and estimated KeSt.
    - Top holdings ranked by total P/L.
 
-All sidebar controls (broker selector, file uploader, sample toggle, export button) also carry hover tooltips explaining their purpose.
+The **Include fees in tax basis** toggle (default OFF) controls whether brokerage commissions are factored into taxable gain calculations — see [Fee Deductibility](#fee-deductibility-toggle) below.
+
+All sidebar controls carry hover tooltips explaining their purpose.
 
 ## Adding a New Broker
 
@@ -131,14 +133,29 @@ The tax engine and UI require zero changes.
 | `transaction_audit.csv` | Trade-by-trade calculation log with FX details |
 | `manual_processing_required.csv` | ETF/FUND and unrecognised-category rows requiring manual review |
 
+## Fee Deductibility Toggle
+
+Austrian private income tax law (**§ 20 Abs. 2 EStG**) prohibits the deduction of brokerage fees and transaction costs when calculating taxable capital gains for private investors. The engine enforces this by default.
+
+| Toggle state | Behaviour | When to use |
+| --- | --- | --- |
+| **OFF** (default) | Commissions are excluded from the taxable gain calculation | Austrian private accounts — strictly correct under § 20 Abs. 2 EStG |
+| **ON** | Commissions are included in cost basis and proceeds | Business accounts or non-Austrian jurisdictions |
+
+Regardless of the toggle, the **actual fee amount paid** is always recorded in the `commission_eur` column of the Detailed Audit Trail, so you always have a complete record of what your broker charged.
+
+> **Technical detail for derivatives:** IBKR's `fifoPnlRealized` field already embeds the closing-leg commission in its net P/L figure. When fees are excluded, the engine strips the closing commission back out. The opening-leg commission is implicitly part of the IBKR cost basis and cannot be separated without full leg reconstruction — amounts involved are typically < €2 per contract.
+
 ## Calculation Highlights
 
 ### Moving Average Stock Cost
 
 ```text
-NewAvgCost =
-    (OldTotalCost_EUR + NewQty × Price_EUR + Commission_EUR)
-    / (OldQty + NewQty)
+# Fees excluded (default — Austrian § 20 Abs. 2 EStG):
+NewAvgCost = (OldTotalCost_EUR + NewQty × Price_EUR) / (OldQty + NewQty)
+
+# Fees included (business / non-Austrian mode):
+NewAvgCost = (OldTotalCost_EUR + NewQty × Price_EUR + Commission_EUR) / (OldQty + NewQty)
 ```
 
 Sales realize P/L against the running moving-average cost basis.

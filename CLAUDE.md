@@ -127,6 +127,22 @@ E1kv field mapping:
 
 Funds (`FUND`) and any unrecognised asset categories are routed to `manual_processing` — Austrian fund tax rules require per-fund inspection.
 
+### Fee Deductibility (`include_fees` toggle)
+
+Austrian private account rules (**§ 20 Abs. 2 EStG**) prohibit deduction of brokerage fees for taxable capital gain purposes. The engine defaults to `include_fees=False`.
+
+`TaxAggregator.__init__(fx_provider, include_fees=False)` — pass `include_fees=True` for business accounts or non-Austrian jurisdictions.
+
+**Stock P/L effect:**
+- `include_fees=False`: commission is never added to cost basis on BUY, and never subtracted from proceeds on SELL → taxable gain = gross price difference only.
+- `include_fees=True`: commission is added to cost basis on BUY and subtracted from proceeds on SELL (previous behaviour).
+
+**Derivative P/L effect:**
+- Primary path (`fifoPnlRealized ≠ 0`): IBKR embeds commission in this figure. Fee-excluded mode strips the closing-leg commission: `pnl_original = fifo_pnl - commission`.
+- Fallback path (`fifoPnlRealized = 0`, close indicator): fee-excluded mode uses `proceeds` alone; fee-included uses `proceeds + commission`.
+
+**Audit column `commission_eur` is always the actual fee** regardless of the toggle — the user can always see what the broker charged.
+
 ### Derivative P/L — open vs close
 
 `DerivativeProcessor` uses `fifoPnlRealized` as the primary P/L source:
@@ -134,11 +150,16 @@ Funds (`FUND`) and any unrecognised asset categories are routed to `manual_proce
 ```python
 fifo_pnl = float(trade["fifoPnlRealized"])
 open_close = str(trade.get("openCloseIndicator", "")).upper()
-pnl_original = fifo_pnl if fifo_pnl != 0.0 else (proceeds + commission if "C" in open_close else 0.0)
+if fifo_pnl != 0.0:
+    pnl_original = fifo_pnl if self.include_fees else fifo_pnl - commission
+elif "C" in open_close:
+    pnl_original = proceeds + commission if self.include_fees else proceeds
+else:
+    pnl_original = 0.0
 ```
 
-- Non-zero `fifoPnlRealized` → always use it.
-- Zero + close indicator → `proceeds + commission` fallback (IBKR omitted the value).
+- Non-zero `fifoPnlRealized` → always use it (strip commission back out when fees excluded).
+- Zero + close indicator → fallback; exclude commission when fees excluded.
 - Zero + open indicator → `0.0` (nothing realized on opening leg).
 
 **Never use `float_value or fallback`** for numeric P/L — `0.0` is falsy in Python and would replace a legitimate break-even result with the fallback.
@@ -313,3 +334,4 @@ python smoke_test.py
 - Do not use Python `or` for numeric fallback logic (`0.0 or fallback` silently replaces legitimate zero values — use an explicit `if value != 0.0` check instead).
 - Do not silently discard trades with unrecognised `assetCategory` — route them to the manual queue.
 - Do not include `DIV`/`INT` audit rows in trading performance calculations — filter to `STK`/`OPT` only.
+- Do not hardcode commissions into the taxable gain calculation — always route through the `include_fees` flag on `TaxAggregator` / the processors. Default must be `False` (Austrian § 20 Abs. 2 EStG).
