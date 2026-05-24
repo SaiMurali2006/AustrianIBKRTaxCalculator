@@ -27,7 +27,7 @@ class CapitalGainsProcessor:
         if trades.empty:
             return realized_total, pd.DataFrame(rows)
 
-        for _, trade in trades.sort_values(["date", "datetime"]).iterrows():
+        for trade in trades.sort_values(["date", "datetime"]).to_dict("records"):
             qty = abs(float(trade["quantity"]))
             signed_qty = float(trade["quantity"])
             price = float(trade["tradePrice"])
@@ -100,13 +100,14 @@ class DerivativeProcessor:
         if trades.empty:
             return total, pd.DataFrame(rows)
 
-        for _, trade in trades.sort_values(["date", "datetime"]).iterrows():
+        for trade in trades.sort_values(["date", "datetime"]).to_dict("records"):
             currency = str(trade["currency"])
             trade_date = str(trade["date"])
             proceeds = float(trade["proceeds"])
             commission = float(trade["ibCommission"])
             fifo_pnl = float(trade["fifoPnlRealized"])
             open_close = str(trade.get("openCloseIndicator", "")).upper()
+            category = str(trade.get("assetCategory", "OPT")).upper() or "OPT"
             if fifo_pnl != 0.0:
                 # IBKR's fifoPnlRealized is net of commission; strip it back out for Austrian private accounts.
                 pnl_original = fifo_pnl if self.include_fees else fifo_pnl - commission
@@ -119,7 +120,7 @@ class DerivativeProcessor:
             rows.append(
                 {
                     "date": trade_date,
-                    "category": "OPT",
+                    "category": category,
                     "symbol": trade.get("symbol", ""),
                     "isin": trade.get("isin", ""),
                     "buy_sell": _trade_action(trade, float(trade["quantity"])),
@@ -151,13 +152,24 @@ class TaxAggregator:
         option_total, option_audit = DerivativeProcessor(self.fx_provider, self.include_fees).process(parsed.options)
         dividend_total, withholding_total, dividend_audit = self._cash_income(parsed.dividends, "DIV", "862")
         interest_total, interest_tax, interest_audit = self._cash_income(parsed.interest, "INT", "863")
-        foreign_tax_credit = abs(withholding_total + interest_tax)
+
+        # Cap dividend withholding credit at 15% of gross dividends — the maximum creditable rate under
+        # most Austrian DBA treaties (Austria–USA: Art. 10 DBA; Austria–UK/EU: 0–15%).
+        # If IBKR withheld more than the treaty rate (e.g. 30% without W-8BEN), only 15% is creditable.
+        max_creditable_div = max(0.0, dividend_total) * 0.15
+        creditable_div_tax = min(abs(withholding_total), max_creditable_div)
+        foreign_tax_credit = round(creditable_div_tax + abs(interest_tax), 2)
 
         basket_income = stock_total + option_total + dividend_total + interest_total
         taxable_base = max(0.0, basket_income)
         gross_tax = taxable_base * KEST_RATE
         tax_due = max(0.0, gross_tax - foreign_tax_credit)
         audit = pd.concat([stock_audit, option_audit, dividend_audit, interest_audit], ignore_index=True)
+
+        # Detect tax year from the most recent trade date in the statement
+        date_strs = audit["date"].dropna().astype(str)
+        years = pd.to_numeric(date_strs.str[:4], errors="coerce").dropna()
+        tax_year = int(years.max()) if not years.empty else None
 
         fields = {
             "861": round(stock_total, 2),
@@ -181,6 +193,7 @@ class TaxAggregator:
             taxable_base=round(taxable_base, 2),
             tax_due=round(tax_due, 2),
             foreign_tax_credit=round(foreign_tax_credit, 2),
+            tax_year=tax_year,
         )
 
     def _cash_income(self, cash: pd.DataFrame, category: str, field: str) -> tuple[float, float, pd.DataFrame]:
@@ -190,7 +203,7 @@ class TaxAggregator:
         if cash.empty:
             return income_total, tax_total, pd.DataFrame(rows)
 
-        for _, item in cash.sort_values(["date", "datetime"]).iterrows():
+        for item in cash.sort_values(["date", "datetime"]).to_dict("records"):
             amount = float(item["amount"])
             amount_eur, fx = self.fx_provider.convert(amount, str(item["currency"]), str(item["date"]), item.get("fxRateToBase"))
             is_tax = amount < 0 and "withholding" in f"{item.get('type', '')} {item.get('description', '')}".lower()
@@ -231,8 +244,9 @@ class TaxAggregator:
         e1kv = pd.DataFrame(
             [{"E1kv_Field": field, "Amount_EUR": amount} for field, amount in sorted(result.e1kv_fields.items())]
         )
+        year_label = str(result.tax_year) if result.tax_year else "unknown"
         paths = {
-            "e1kv": output / "E1kv_Report_2026.csv",
+            "e1kv": output / f"E1kv_Report_{year_label}.csv",
             "audit": output / "transaction_audit.csv",
             "manual": output / "manual_processing_required.csv",
         }
@@ -242,7 +256,7 @@ class TaxAggregator:
         return paths
 
 
-def _trade_action(trade: pd.Series, signed_qty: float) -> str:
+def _trade_action(trade: dict | pd.Series, signed_qty: float) -> str:
     buy_sell = str(trade.get("buySell", "")).upper()
     if buy_sell in {"BUY", "SELL"}:
         return buy_sell

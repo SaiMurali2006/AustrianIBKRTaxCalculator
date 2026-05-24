@@ -3,7 +3,9 @@
     "allow": [
       "PowerShell(New-Item -ItemType Directory -Force \"c:\\\\Users\\\\apexl\\\\OneDrive\\\\Documents\\\\tax_calculator_v7\\\\parsers\")",
       "PowerShell(head -20)",
-      "Bash(\"./venv/Scripts/python.exe\" smoke_test.py)"
+      "Bash(\"./venv/Scripts/python.exe\" smoke_test.py)",
+      "WebSearch",
+      "Bash(python smoke_test.py)"
     ]
   }
 }

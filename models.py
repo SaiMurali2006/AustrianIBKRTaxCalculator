@@ -63,3 +63,4 @@ class TaxResult:
     taxable_base: float
     tax_due: float
     foreign_tax_credit: float
+    tax_year: int | None = None

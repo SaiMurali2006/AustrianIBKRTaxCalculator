@@ -114,18 +114,34 @@ Defined at module level in `tax_engine.py`:
 KEST_RATE = 0.275   # Austrian KESt — 27.5%
 ```
 
-E1kv field mapping:
+E1kv field mapping (reference numbers for the current tax year — BMF updates these annually):
 
 | Field | Category | Note |
 |---|---|---|
-| `"861"` | Stock capital gains | Moving-average realization |
-| `"775"` | Derivative gains | `fifoPnlRealized` on close; 0 on open |
-| `"862"` | Dividends | Gross income |
+| `"861"` | Stock capital gains | Moving-average realization (§ 27 Abs. 3 EStG) |
+| `"775"` | Derivative gains | `fifoPnlRealized` on close; 0 on open (§ 27 Abs. 4 EStG) |
+| `"862"` | Dividends | Gross income (§ 27 Abs. 2 EStG) |
 | `"777"` | Interest (domestic) | Alias; set equal to `"863"` |
-| `"863"` | Interest (foreign) | IBKR is a foreign broker — audit rows use `"863"` |
-| `"998"` | Foreign withholding tax | Creditable against gross KeSt |
+| `"863"` | Interest (foreign) | IBKR is a foreign broker — audit rows use `"863"` (§ 27 Abs. 2 EStG) |
+| `"998"` | Foreign withholding tax | Creditable against gross KeSt, capped at 15% of gross dividends (DBA) |
 
 Funds (`FUND`) and any unrecognised asset categories are routed to `manual_processing` — Austrian fund tax rules require per-fund inspection.
+
+### Foreign Withholding Tax Credit Cap
+
+Under most Austrian DBA treaties (Austria–USA Art. 10, etc.), the maximum creditable foreign dividend withholding is **15% of the gross dividend amount**, regardless of how much was actually withheld.
+
+```python
+max_creditable_div = max(0.0, dividend_total) * 0.15
+creditable_div_tax = min(abs(withholding_total), max_creditable_div)
+foreign_tax_credit = creditable_div_tax + abs(interest_tax)
+```
+
+This protects against data where IBKR withheld at 30% (no W-8BEN filed). The `e1kv_fields["998"]` value always reflects the capped creditable amount, not the raw withheld amount.
+
+### Pre-2011 Grandfathering (§ 124b Z 185 EStG)
+
+Securities acquired before **1 January 2011** (derivatives and interest-bearing instruments: **31 March 2012**) are grandfathered — capital gains on these are generally **tax-free** for private investors. The engine cannot auto-detect acquisition dates from broker statements. The UI shows a disclaimer in the KeSt Breakdown expander. Users must identify and exclude pre-2011 positions manually.
 
 ### Fee Deductibility (`include_fees` toggle)
 

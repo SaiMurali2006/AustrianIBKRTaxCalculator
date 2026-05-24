@@ -177,12 +177,27 @@ All non-EUR amounts are converted using:
 
 ```text
 basket_income = stock_P/L + option_P/L + dividends + interest
-taxable_base  = max(0, basket_income)          ← internal loss offset
+taxable_base  = max(0, basket_income)               ← internal loss offset (§ 27 Abs. 8 EStG)
 gross_kest    = taxable_base × 0.275
+foreign_tax_credit = min(withholding_paid, gross_dividends × 0.15)   ← DBA cap
 kest_due      = max(0, gross_kest − foreign_tax_credit)
 ```
 
-Loss offsetting happens within the 27.5% basket only. Foreign withholding tax is tracked separately as a creditable amount (field 998).
+Loss offsetting (Verlustausgleich) applies within the 27.5% basket: stock losses offset derivative gains and vice versa. No loss carryforward to future years for private investors (§ 27 EStG; carryforward only via voluntary § 97 Abs. 2 EStG election).
+
+Foreign withholding tax credit is **capped at 15% of gross dividends** per DBA treaty rules (Austria–USA Art. 10 DBA; most Austrian DBAs). If IBKR withheld more than the treaty rate (e.g. 30% without W-8BEN), the engine automatically applies the cap.
+
+### Austrian Tax Law Compliance Notes
+
+| Topic | Engine behaviour | Legal basis |
+| --- | --- | --- |
+| KeSt rate | 27.5% flat on all categories | § 27a EStG |
+| Loss offsetting | Full offset within the 27.5% basket | § 27 Abs. 8 EStG |
+| Brokerage fees | Excluded by default (private accounts) | § 20 Abs. 2 EStG |
+| Withholding credit cap | 15% of gross dividends | Austria–USA DBA Art. 10 |
+| Pre-2011 grandfathering | **Not auto-detected** — manual review required | § 124b Z 185 EStG |
+| ETF / fund taxation | Flagged for manual review; not calculated | Fund Reporting Regulation 2015 |
+| Tax year | Detected automatically from trade dates | Calendar year |
 
 ## Smoke Test
 

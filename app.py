@@ -110,8 +110,8 @@ def main() -> None:
     parsed, result = st.session_state[cache_key]
 
     if export_clicked:
-        TaxAggregator.export_reports(result)
-        st.success("CSV exports generated: E1kv_Report_2026.csv, transaction_audit.csv, manual_processing_required.csv")
+        paths = TaxAggregator.export_reports(result)
+        st.success(f"CSV exports generated: {paths['e1kv'].name}, {paths['audit'].name}, {paths['manual'].name}")
 
     if view == "Executive Summary":
         render_summary(result, parsed, include_fees)
@@ -239,8 +239,9 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
+    tax_year_label = str(result.tax_year) if result.tax_year else "unknown"
     gross_kest = round(result.taxable_base * 0.275, 2)
-    with st.expander("KeSt Calculation Breakdown"):
+    with st.expander(f"KeSt Calculation Breakdown — Tax Year {tax_year_label}"):
         c1, c2, c3, c4 = st.columns(4)
         c1.metric(
             "Taxable Basket",
@@ -255,12 +256,18 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
         c3.metric(
             "Foreign Tax Credit",
             f"−{_eur(result.foreign_tax_credit)}",
-            help="Withholding taxes already paid abroad (e.g. 15% US dividend withholding). Credited against your Austrian KeSt — enter on E1kv row 998.",
+            help="Dividend withholding tax credited against Austrian KeSt, capped at 15% of gross dividends per DBA treaty rules (Austria–USA Art. 10 DBA). Enter on E1kv row 998.",
         )
         c4.metric(
             "Net KeSt Due",
             _eur(result.tax_due),
             help="Your final Austrian KeSt liability: Gross KeSt minus the foreign tax credit. This is the amount to declare in FinanzOnline.",
+        )
+        st.caption(
+            "⚠ Securities acquired before 1 January 2011 (derivatives / interest-bearing instruments: 31 March 2012) "
+            "are grandfathered and may be exempt from KeSt (§ 124b Z 185 EStG). "
+            "This engine cannot auto-detect pre-2011 acquisitions — review any long-held positions manually. "
+            "E1kv field numbers shown are reference numbers for the current tax year and are updated annually by BMF."
         )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
