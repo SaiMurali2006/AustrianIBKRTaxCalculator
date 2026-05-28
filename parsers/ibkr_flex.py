@@ -54,9 +54,19 @@ def parse(source: str | Path | bytes) -> ParsedData:
     funds = pd.concat([_fund_rows, _unknown_rows], ignore_index=True)
 
     dividends = _cash_filter(cash_df, ["dividend", "payment in lieu", "withholding"])
-    interest = _cash_filter(cash_df, ["interest"])
+    # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 863).
+    # IBKR "Credit Interest" / "Debit Interest" / "Broker Interest" on idle cash → bank deposit (25%).
+    # Bond coupons / accrued interest → securities-basket 27.5%.
+    bank_interest = _cash_filter(cash_df, ["credit interest", "debit interest", "broker interest", "interest on cash"])
+    interest_all = _cash_filter(cash_df, ["interest"])
+    bond_interest = (
+        interest_all.drop(index=bank_interest.index, errors="ignore").copy()
+        if not interest_all.empty
+        else _empty(CASH_COLUMNS)
+    )
+    consumed = dividends.index.union(interest_all.index)
     cash_other = (
-        cash_df.drop(index=dividends.index.union(interest.index), errors="ignore").copy()
+        cash_df.drop(index=consumed, errors="ignore").copy()
         if not cash_df.empty
         else _empty(CASH_COLUMNS)
     )
@@ -65,7 +75,8 @@ def parse(source: str | Path | bytes) -> ParsedData:
         stocks=stocks.reset_index(drop=True),
         options=options.reset_index(drop=True),
         dividends=dividends.reset_index(drop=True),
-        interest=interest.reset_index(drop=True),
+        bond_interest=bond_interest.reset_index(drop=True),
+        bank_interest=bank_interest.reset_index(drop=True),
         funds=funds.reset_index(drop=True),
         cash_other=cash_other.reset_index(drop=True),
         all_trades=trades_df.reset_index(drop=True),

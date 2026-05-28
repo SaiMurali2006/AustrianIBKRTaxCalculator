@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-Streamlit dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt, 27.5%), and maps results to E1kv tax form fields. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
+Streamlit dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt — 27.5% securities basket, 25% bank-deposit basket), and maps results to E1kv form Kennzahlen using the codes from the official BMF E1kv 2024 form. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
 
 ---
 
@@ -16,9 +16,9 @@ Broker Statement (any format)
   models.ParsedData     canonical data contract
         ↓
   tax_engine.TaxAggregator
-        ├── CapitalGainsProcessor   stocks, moving-average cost basis
-        ├── DerivativeProcessor     options / FOP / warrants
-        └── _cash_income            dividends, interest, withholding
+        ├── CapitalGainsProcessor   stocks, moving-average cost basis, gain/loss split
+        ├── DerivativeProcessor     options / FOP / warrants, gain/loss split
+        └── _cash_income            dividends, bond interest, bank interest, withholding
         ↓
   models.TaxResult
         ↓
@@ -38,7 +38,7 @@ The canonical boundary is `models.ParsedData`. Any broker parser must produce th
 | `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML` | `models`, stdlib, pandas |
 | `tax_engine.py` | `ParsedData` → `TaxResult`; broker-agnostic | `models`, `currency_provider` |
 | `currency_provider.py` | EUR conversion, ECB cache | stdlib only |
-| `app.py` | Streamlit UI; session_state caching; three-view navigation; Altair Performance charts | `parsers`, `tax_engine`, `styles`, `currency_provider`, `altair`, `hashlib` |
+| `app.py` | Streamlit UI; two-step session cache (parse + calc); three-view nav; Altair charts; Altbestand selector | `parsers`, `tax_engine`, `styles`, `currency_provider`, `altair`, `hashlib` |
 | `styles.py` | Dark FinTech CSS string | nothing |
 | `smoke_test.py` | Engine verification with structural and directional value assertions | `parsers`, `tax_engine` |
 
@@ -62,15 +62,18 @@ All broker parsers must produce this dataclass. The tax engine reads only these 
 ```python
 @dataclass
 class ParsedData:
-    stocks: pd.DataFrame       # TRADE_COLUMNS, assetCategory == STK
-    options: pd.DataFrame      # TRADE_COLUMNS, assetCategory in {OPT, FOP, WAR, IOPT}
-    funds: pd.DataFrame        # TRADE_COLUMNS, FUND + any unrecognised assetCategory (manual review queue)
-    dividends: pd.DataFrame    # CASH_COLUMNS, matched by dividend/withholding keywords
-    interest: pd.DataFrame     # CASH_COLUMNS, matched by interest keywords
-    cash_other: pd.DataFrame   # CASH_COLUMNS, everything else
-    all_trades: pd.DataFrame   # TRADE_COLUMNS, unfiltered
-    all_cash: pd.DataFrame     # CASH_COLUMNS, unfiltered
+    stocks: pd.DataFrame         # TRADE_COLUMNS, assetCategory == STK
+    options: pd.DataFrame        # TRADE_COLUMNS, assetCategory in {OPT, FOP, WAR, IOPT}
+    funds: pd.DataFrame          # TRADE_COLUMNS, FUND + any unrecognised assetCategory (manual review)
+    dividends: pd.DataFrame      # CASH_COLUMNS, dividend/withholding keywords (27.5% basket)
+    bond_interest: pd.DataFrame  # CASH_COLUMNS, bond coupon / accrued interest (27.5% basket)
+    bank_interest: pd.DataFrame  # CASH_COLUMNS, broker credit/debit interest on cash (25% basket)
+    cash_other: pd.DataFrame     # CASH_COLUMNS, everything else
+    all_trades: pd.DataFrame     # TRADE_COLUMNS, unfiltered
+    all_cash: pd.DataFrame       # CASH_COLUMNS, unfiltered
 ```
+
+Interest is split at the parser layer because the two flows fall into different KESt baskets — bond coupons stay in the 27.5% basket, bank-deposit interest is taxed at 25% and cannot be offset against securities losses (§27a Abs. 2 EStG).
 
 **`TRADE_COLUMNS`** (defined in `models.py`):
 `date`, `datetime`, `currency`, `fxRateToBase`, `assetCategory`, `symbol`, `description`, `isin`, `quantity`, `tradePrice`, `proceeds`, `ibCommission`, `openCloseIndicator`, `cost`, `fifoPnlRealized`, `buySell`
@@ -111,37 +114,57 @@ The UI populates its broker `selectbox` directly from `BROKER_REGISTRY.keys()`. 
 Defined at module level in `tax_engine.py`:
 
 ```python
-KEST_RATE = 0.275   # Austrian KESt — 27.5%
+KEST_RATE       = 0.275   # 27.5% securities basket (§27a Abs. 1 EStG)
+KEST_RATE_BANK  = 0.25    # 25% bank-deposit-interest basket (§27a Abs. 2 EStG)
+DBA_DIVIDEND_CAP = 0.15   # Foreign WHT credit cap per Austrian DBA treaties
 ```
 
-E1kv field mapping (reference numbers for the current tax year — BMF updates these annually):
+E1kv Kennzahl mapping — verified against the official **BMF E1kv 2024** form (`https://formulare.bmf.gv.at/service/formulare/inter-Steuern/pdfs/2024/E1kv.pdf`). All values are foreign-broker (IBKR is a foreign depot from Austria's perspective).
 
-| Field | Category | Note |
-|---|---|---|
-| `"861"` | Stock capital gains | Moving-average realization (§ 27 Abs. 3 EStG) |
-| `"775"` | Derivative gains | `fifoPnlRealized` on close; 0 on open (§ 27 Abs. 4 EStG) |
-| `"862"` | Dividends | Gross income (§ 27 Abs. 2 EStG) |
-| `"777"` | Interest (domestic) | Alias; set equal to `"863"` |
-| `"863"` | Interest (foreign) | IBKR is a foreign broker — audit rows use `"863"` (§ 27 Abs. 2 EStG) |
-| `"998"` | Foreign withholding tax | Creditable against gross KeSt, capped at 15% of gross dividends (DBA) |
+| Kennzahl | Category | Basket | Note |
+|---|---|---|---|
+| `"994"` | Stock / ETF / bond realized gains | 27.5% | Moving-average realization (§27 Abs. 3 EStG) |
+| `"892"` | Realized losses on securities and non-securitised derivatives | 27.5% | Reported separately so the Finanzamt can verify Verlustausgleich |
+| `"981"` | Non-securitised derivative gains (options, futures) | 27.5% | Securitised derivatives (warrants, certificates) belong in KZ 995/896 — out of scope |
+| `"863"` | Foreign dividends and bond coupon interest | 27.5% | Gross income (§27 Abs. 2 EStG) |
+| `"861"` | Foreign bank deposit interest | **25%** | Cannot be offset against securities losses |
+| `"998"` | Creditable foreign WHT, 27.5% basket | — | Capped at 15% of gross (DBA) |
+| `"901"` | Creditable foreign WHT, 25% basket | — | Rare (bank-deposit WHT) |
 
-Funds (`FUND`) and any unrecognised asset categories are routed to `manual_processing` — Austrian fund tax rules require per-fund inspection.
+`PRE-2011 EXEMPT` is an internal audit-only marker — rows tagged this way are excluded from every Kennzahl (see Altbestand section below).
+
+Funds (`FUND`) and any unrecognised asset categories are routed to `manual_processing` — Austrian fund tax rules require per-fund inspection. Accumulating ETFs additionally require **ausschüttungsgleiche Erträge** (KZ 937, 27.5%) reporting which the engine does not auto-calculate.
+
+### Two-Basket Calculation
+
+```python
+basket_27 = stock_gain + stock_loss + deriv_gain + deriv_loss + dividend_total + bond_interest_total
+basket_25 = bank_interest_total
+taxable_27 = max(0.0, basket_27)
+taxable_25 = max(0.0, basket_25)            # bank-interest losses are siloed
+tax_due = max(0.0, taxable_27 * KEST_RATE      - credit_27) \
+        + max(0.0, taxable_25 * KEST_RATE_BANK - credit_25)
+```
+
+Within each basket: gains net against losses in the same calendar year. Across baskets: no netting. Across years: no carry-forward in the private-investor sphere.
 
 ### Foreign Withholding Tax Credit Cap
 
-Under most Austrian DBA treaties (Austria–USA Art. 10, etc.), the maximum creditable foreign dividend withholding is **15% of the gross dividend amount**, regardless of how much was actually withheld.
+Under most Austrian DBA treaties (Austria–USA Art. 10, etc.), the maximum creditable foreign dividend withholding is **15% of the gross 27.5%-basket income**. Higher source-country withholding (e.g. 30% with no W-8BEN) is capped at 15% and the excess is surfaced via `TaxResult.excess_wht`.
 
 ```python
-max_creditable_div = max(0.0, dividend_total) * 0.15
-creditable_div_tax = min(abs(withholding_total), max_creditable_div)
-foreign_tax_credit = creditable_div_tax + abs(interest_tax)
+gross_27_for_cap   = max(0.0, dividend_total) + max(0.0, bond_interest_total)
+max_creditable_27  = gross_27_for_cap * DBA_DIVIDEND_CAP
+creditable_wht_27  = min(abs(dividend_wht) + abs(bond_wht), max_creditable_27)
 ```
 
-This protects against data where IBKR withheld at 30% (no W-8BEN filed). The `e1kv_fields["998"]` value always reflects the capped creditable amount, not the raw withheld amount.
+`TaxResult.excess_wht` aggregates: (a) the amount above the DBA cap, (b) the amount above the Austrian tax actually owed in each basket. Per §46 EStG this excess cannot be carried forward — the user must reclaim it from the source country (e.g. IRS Form 1040-NR for US WHT above 15%).
 
 ### Pre-2011 Grandfathering (§ 124b Z 185 EStG)
 
-Securities acquired before **1 January 2011** (derivatives and interest-bearing instruments: **31 March 2012**) are grandfathered — capital gains on these are generally **tax-free** for private investors. The engine cannot auto-detect acquisition dates from broker statements. The UI shows a disclaimer in the KeSt Breakdown expander. Users must identify and exclude pre-2011 positions manually.
+Securities acquired before **1 January 2011** (derivatives and interest-bearing instruments: **31 March 2012**) are tax-free on capital gains for private investors. IBKR statements do not carry the original acquisition date for transferred positions, so detection is impossible from XML alone.
+
+The UI exposes a `Pre-2011 Altbestand (exempt)` multiselect in the sidebar listing every `(symbol, ISIN)` in the parsed statement. Selected ISINs are passed as `excluded_isins` into `TaxAggregator.run(parsed, excluded_isins=...)`. Excluded trades contribute zero to KZ 994/892 and are tagged `"PRE-2011 EXEMPT"` in the audit trail (with `realized_pnl_eur = 0`), but cost-basis tracking continues so subsequent post-2011 sells of the same symbol still calculate against the running average cost.
 
 ### Fee Deductibility (`include_fees` toggle)
 
@@ -205,7 +228,7 @@ Cache lives at `.cache/ecb_rates.json` (gitignored). Every converted value carri
 - DataFrame column suffixes: `_eur` for converted amounts, `_original` for source-currency
 - State-tracking columns: `old_*`, `new_*` (e.g., `old_avg_cost_eur`, `new_quantity`)
 - Asset categories: `UPPERCASE` strings matching IBKR codes (`STK`, `OPT`, `FUND`, …)
-- E1kv fields: string literals (`"861"`, `"775"`, …) — never integers
+- E1kv Kennzahlen: string literals (`"994"`, `"892"`, `"981"`, `"863"`, `"861"`, `"998"`, `"901"`) — never integers
 
 ---
 
@@ -213,7 +236,7 @@ Cache lives at `.cache/ecb_rates.json` (gitignored). Every converted value carri
 
 - Never raise on bad input values — use `_num()` pattern (returns `0.0` on invalid float).
 - Never raise on missing FX rates — fall through the resolution chain.
-- Empty DataFrames are valid input — every processor returns `(0.0, empty_df)` gracefully.
+- Empty DataFrames are valid input — every processor returns `(0.0, 0.0, empty_df)` gracefully.
 - Network failures are non-fatal — ECB fetch wrapped in try/except; app works fully offline.
 - Validate only at system boundaries (XML upload, ECB API response).
 
@@ -247,20 +270,20 @@ The sidebar radio offers three views:
 
 ### Session State Caching
 
-Parsed data is cached in `st.session_state` using a content-hash key so the spinner only fires once per unique file/broker combination:
+Two-step cache: parsing depends only on `(xml_payload, broker)`; calculation depends additionally on `(include_fees, excluded_isins)`. This lets the Altbestand selector recalculate without re-parsing the XML, and keeps view-switching free.
 
 ```python
-cache_key = hashlib.md5(xml_payload if isinstance(xml_payload, bytes)
-                        else xml_payload.encode()).hexdigest() + broker
-if cache_key not in st.session_state:
-    with st.spinner("Parsing statement and calculating KeSt…"):
-        parsed = get_parser(broker)(xml_payload)
-        result = TaxAggregator(ECBRateProvider()).run(parsed)
-        st.session_state[cache_key] = (parsed, result)
-parsed, result = st.session_state[cache_key]
-```
+parse_key = "parse_" + md5(xml_payload).hexdigest() + broker
+if parse_key not in st.session_state:
+    st.session_state[parse_key] = get_parser(broker)(xml_payload)
+parsed = st.session_state[parse_key]
 
-This ensures view-switching never re-parses.
+calc_key = parse_key + fee_flag + "|".join(sorted(excluded_isins))
+if calc_key not in st.session_state:
+    st.session_state[calc_key] = TaxAggregator(..., include_fees=include_fees) \
+        .run(parsed, excluded_isins=excluded_isins)
+result = st.session_state[calc_key]
+```
 
 ### Performance View (Altair)
 
@@ -351,3 +374,6 @@ python smoke_test.py
 - Do not silently discard trades with unrecognised `assetCategory` — route them to the manual queue.
 - Do not include `DIV`/`INT` audit rows in trading performance calculations — filter to `STK`/`OPT` only.
 - Do not hardcode commissions into the taxable gain calculation — always route through the `include_fees` flag on `TaxAggregator` / the processors. Default must be `False` (Austrian § 20 Abs. 2 EStG).
+- Do not lump bank-deposit interest into the 27.5% basket. Bank interest is taxed at 25% (§27a Abs. 2 EStG) and cannot be offset against securities losses. The parser must classify "Credit Interest" / "Debit Interest" / "Broker Interest" into `ParsedData.bank_interest`, separate from `bond_interest`.
+- Do not net gains against losses before emitting Kennzahlen. KZ 994 (gains) and KZ 892 (losses) must be reported separately so the Finanzamt can verify Verlustausgleich.
+- Do not silently discard non-creditable foreign WHT. Surface it via `TaxResult.excess_wht` so the user can reclaim from the source country.

@@ -74,10 +74,6 @@ def main() -> None:
                 "Either way, the fee amount is always visible in the Detailed Audit Trail."
             ),
         )
-        export_clicked = st.button(
-            "Generate CSV Exports",
-            help="Saves E1kv_Report_2026.csv, transaction_audit.csv, and manual_processing_required.csv to the current directory.",
-        )
 
     xml_payload = uploaded.getvalue() if uploaded else (BROKER_SAMPLES[broker] if use_sample and sample_available else None)
 
@@ -86,7 +82,7 @@ def main() -> None:
         <div class="tax-hero">
             <div class="eyebrow">Austria E1kv Digital Tax Report</div>
             <div class="title">Capital Gains Tax Dashboard</div>
-            <div class="subtitle">Stocks, options, dividends, interest and foreign withholding tax mapped into Austrian E1kv fields with EUR conversion and loss offsetting inside the 27.5% basket.</div>
+            <div class="subtitle">Stocks, options, dividends and interest mapped into the Austrian E1kv form with EUR conversion, gain/loss separation, and the 25% / 27.5% basket split required by §27a EStG.</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -99,15 +95,32 @@ def main() -> None:
         st.info("Upload a statement file or enable the embedded sample.")
         return
 
-    # Content-hash keyed cache — auto-invalidates on new file, broker change, or fee-mode change
-    cache_key = hashlib.md5(xml_payload if isinstance(xml_payload, bytes) else xml_payload.encode()).hexdigest() + broker + ("F" if include_fees else "N")
-    if cache_key not in st.session_state:
-        with st.spinner("Parsing statement and calculating KeSt…"):
-            parsed = get_parser(broker)(xml_payload)
-            result = TaxAggregator(ECBRateProvider(), include_fees=include_fees).run(parsed)
-            st.session_state[cache_key] = (parsed, result)
+    parse_key = "parse_" + hashlib.md5(
+        xml_payload if isinstance(xml_payload, bytes) else xml_payload.encode()
+    ).hexdigest() + broker
+    if parse_key not in st.session_state:
+        with st.spinner("Parsing statement…"):
+            st.session_state[parse_key] = get_parser(broker)(xml_payload)
+    parsed = st.session_state[parse_key]
 
-    parsed, result = st.session_state[cache_key]
+    with st.sidebar:
+        excluded_isins = _altbestand_selector(parsed)
+        export_clicked = st.button(
+            "Generate CSV Exports",
+            help="Saves E1kv_Report_<year>.csv, transaction_audit.csv, and manual_processing_required.csv to the current directory.",
+        )
+
+    calc_key = (
+        parse_key
+        + ("F" if include_fees else "N")
+        + "|".join(sorted(excluded_isins))
+    )
+    if calc_key not in st.session_state:
+        with st.spinner("Calculating KeSt…"):
+            st.session_state[calc_key] = TaxAggregator(
+                ECBRateProvider(), include_fees=include_fees
+            ).run(parsed, excluded_isins=excluded_isins)
+    result = st.session_state[calc_key]
 
     if export_clicked:
         paths = TaxAggregator.export_reports(result)
@@ -121,41 +134,76 @@ def main() -> None:
         render_audit(result)
 
 
+def _altbestand_selector(parsed) -> set[str]:
+    """Pre-2011 Altbestand exclusion — §124b Z 185 EStG.
+
+    Lets the user mark specific (symbol, ISIN) combinations as grandfathered. The engine
+    will skip realized P/L for those ISINs entirely. IBKR Flex statements do not carry
+    acquisition dates for transferred positions, so this must be a manual selection.
+    """
+    if parsed.stocks.empty:
+        return set()
+
+    pairs = (
+        parsed.stocks[["symbol", "isin"]]
+        .drop_duplicates()
+        .sort_values("symbol")
+        .to_dict("records")
+    )
+    options_map = {f"{p['symbol']} — {p['isin'] or '(no ISIN)'}": str(p["isin"] or "") for p in pairs}
+    options_map = {label: isin for label, isin in options_map.items() if isin}
+    if not options_map:
+        return set()
+    selected = st.multiselect(
+        "Pre-2011 Altbestand (exempt)",
+        options=list(options_map.keys()),
+        default=[],
+        help=(
+            "Securities acquired before 1 January 2011 (derivatives / interest-bearing "
+            "instruments: 31 March 2012) are tax-free under § 124b Z 185 EStG. "
+            "IBKR statements do not include the original acquisition date for transferred "
+            "positions — pick the symbols you know are Altbestand. Their realized P/L is "
+            "excluded from KeSt and tagged 'PRE-2011 EXEMPT' in the audit trail."
+        ),
+    )
+    return {options_map[label] for label in selected}
+
+
 def render_summary(result, parsed, include_fees: bool = False) -> None:
-    # All six cards rendered in one HTML block so they actually live inside the CSS grid.
+    fields = result.e1kv_fields
     field_cards = [
         (
-            "blue", "Field 861", "Stocks realized gains", result.e1kv_fields["861"],
-            "Realized gains from stock sales. Calculated using the Austrian moving-average cost method "
-            "(Gleitender Durchschnittspreis). Each sale is matched against the running average purchase price. "
-            "Report this amount on E1kv row 861. ◦ Source: bmf.gv.at",
+            "blue", "Field 994", "Stock realized gains", fields["994"],
+            "Realized gains from foreign stock/ETF/bond sales. Moving-average cost basis "
+            "(Gleitender Durchschnittspreis). Report on E1kv row 994 (27.5% basket). ◦ Source: bmf.gv.at",
         ),
         (
-            "purple", "Field 775", "Derivatives / options", result.e1kv_fields["775"],
-            "Net profit and loss from options, futures, warrants, and other derivative instruments. "
-            "Gains and losses are recognized at close or expiry. Report on E1kv row 775. ◦ Source: bmf.gv.at / EStG §27",
+            "purple", "Field 981", "Derivative gains", fields["981"],
+            "Net gains on non-securitised derivatives (options, futures). "
+            "Securitised derivatives (warrants, certificates) belong in KZ 995/896 — out of scope here. "
+            "Report on E1kv row 981 (27.5% basket). ◦ Source: bmf.gv.at / EStG §27",
         ),
         (
-            "green", "Field 862", "Dividends", result.e1kv_fields["862"],
-            "Gross dividend income received from domestic and foreign companies, before any tax deduction. "
-            "Foreign withholding tax on dividends is tracked separately in Field 998. Report on E1kv row 862. ◦ Source: bmf.gv.at",
+            "red", "Field 892", "Realized losses", fields["892"],
+            "Combined realized losses on foreign securities and non-securitised derivatives. "
+            "Offset against gains within the 27.5% basket only — no carry-forward to next year (§27a EStG). "
+            "Report on E1kv row 892. ◦ Source: bmf.gv.at",
         ),
         (
-            "green", "Field 777/863", "Foreign interest", result.e1kv_fields["777"],
-            "Interest income from bonds, cash accounts, and similar instruments. "
-            "Use row 777 for domestic Austrian sources and row 863 for foreign sources. ◦ Source: bmf.gv.at",
+            "green", "Field 863", "Foreign dividends + bond int.", fields["863"],
+            "Gross foreign dividends and bond-coupon interest before any tax deduction. "
+            "Foreign withholding tax is tracked separately in Field 998. Report on E1kv row 863. ◦ Source: bmf.gv.at",
         ),
         (
-            "gold", "Field 998", "Creditable withholding tax", result.e1kv_fields["998"],
-            "Foreign withholding tax already deducted at source — for example, the US levies 15% on dividends paid to "
-            "Austrian residents. This amount credits against your Austrian KeSt bill, reducing your final liability. "
+            "gold", "Field 998", "Creditable WHT (27.5%)", fields["998"],
+            "Foreign withholding tax credited against Austrian KeSt, capped at 15% of gross 27.5%-basket "
+            "income per DBA treaty (e.g. Austria–USA Art. 10). Excess is shown in the warning below. "
             "Report on E1kv row 998. ◦ Source: bmf.gv.at / DBA treaties",
         ),
         (
             "red", "KeSt Due", "Net liability after credits", result.tax_due,
-            "Your final Austrian capital income tax (KeSt) at 27.5%. Losses within the basket offset gains before the "
-            "rate is applied, and foreign withholding taxes are then credited. This is the amount you owe to "
-            "FinanzOnline after all offsets. ◦ Source: bmf.gv.at",
+            "Final Austrian KeSt: 27.5% on the securities basket plus 25% on bank interest, "
+            "minus the foreign tax credit. This is what you owe via FinanzOnline. ◦ Source: bmf.gv.at",
         ),
     ]
 
@@ -172,12 +220,27 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
     cards_html += "</div>"
     st.markdown(cards_html, unsafe_allow_html=True)
 
+    if result.excess_wht > 0:
+        st.warning(
+            f"⚠ {_eur(result.excess_wht)} of foreign withholding tax exceeds the 15% DBA cap "
+            f"or the Austrian tax actually owed. Austria cannot credit this excess (§46 EStG) — "
+            f"reclaim it from the source country (e.g. file IRS Form 1040-NR for US withholding above 15%).",
+            icon="⚠",
+        )
+
+    if result.excluded_isins:
+        st.info(
+            "Pre-2011 Altbestand excluded from KeSt calculation: "
+            + ", ".join(result.excluded_isins),
+            icon="🛡",
+        )
+
     with st.expander("E1kv Field References"):
         st.markdown(
-            "- [KeSt overview — bmf.gv.at](https://www.bmf.gv.at/themen/steuern/kapitalvermoegenssteuern/kapitalertragsteuer.html)\n"
+            "- [Official BMF E1kv 2024 form (PDF)](https://formulare.bmf.gv.at/service/formulare/inter-Steuern/pdfs/2024/E1kv.pdf)\n"
+            "- [KeSt overview — bmf.gv.at](https://www.bmf.gv.at/themen/steuern/sparen-veranlagen/besteuerung-kapitalertraege-inland.html)\n"
             "- [EStG §27 / §27a legal text — ris.bka.gv.at](https://www.ris.bka.gv.at/GeltendeFassung.wxe?Abfrage=Bundesnormen&Gesetzesnummer=10004570)\n"
             "- [DBA treaty credits — bmf.gv.at](https://www.bmf.gv.at/themen/steuern/internationales-steuerrecht/doppelbesteuerung.html)\n"
-            "- [E1kv form and instructions — bmf.gv.at](https://www.bmf.gv.at/dam/jcr:e1kv-formular)\n"
         )
 
     fee_pill_label = "Fees: included in basis" if include_fees else "Fees: excluded (§20 Abs. 2 EStG)"
@@ -191,8 +254,12 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
         f"""
         <div class="status-strip">
             <div class="status-pill"
-                 title="Sum of all income in the Austrian 27.5% KeSt basket: stock gains + derivatives + dividends + interest. Losses within the basket offset gains before tax is applied.">
-                Taxable basket: {_eur(result.taxable_base)}
+                 title="Sum of taxable income in the 27.5% basket: stock gains + derivative gains + dividends + bond interest, minus losses. Floored at zero (no year-to-year carry-forward).">
+                27.5% basket: {_eur(result.taxable_27)}
+            </div>
+            <div class="status-pill"
+                 title="Sum of taxable income in the 25% basket: bank/savings deposit interest only. Cannot be offset against securities losses (§27a Abs. 2 EStG).">
+                25% basket: {_eur(result.taxable_25)}
             </div>
             <div class="status-pill"
                  title="Number of stock (STK) trade rows parsed from your statement.">
@@ -203,7 +270,7 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
                 Option trades: {len(parsed.options)}
             </div>
             <div class="status-pill"
-                 title="ETF and fund rows flagged for manual OeKB review. Austrian fund taxation requires per-fund reporting and is not calculated automatically.">
+                 title="ETF and fund rows flagged for manual OeKB review. Austrian fund taxation (incl. ausschüttungsgleiche Erträge KZ 937) requires per-fund reporting and is not calculated automatically.">
                 Manual fund rows: {len(parsed.funds)}
             </div>
             <div class="status-pill" title="{fee_pill_tip}">
@@ -219,11 +286,13 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
         st.caption("E1KV FIELD MAPPING")
         mapping = pd.DataFrame(
             [
-                ["861", "Aktien realisierte Einkuenfte",                result.e1kv_fields["861"]],
-                ["775", "Derivate und Optionen",                        result.e1kv_fields["775"]],
-                ["862", "Dividenden",                                   result.e1kv_fields["862"]],
-                ["777/863", "Auslaendische Zinsen",                     result.e1kv_fields["777"]],
-                ["998", "Anrechenbare ausl. Quellensteuer",             result.e1kv_fields["998"]],
+                ["994", "Aktien/ETF/Anleihen realisierte Gewinne (27,5%)", fields["994"]],
+                ["892", "Realisierte Verluste (27,5%)",                    fields["892"]],
+                ["981", "Derivate Gewinne (27,5%)",                        fields["981"]],
+                ["863", "Auslandsdividenden + Anleihezinsen (27,5%)",      fields["863"]],
+                ["861", "Auslaendische Sparbuchzinsen (25%)",              fields["861"]],
+                ["998", "Anrechenbare ausl. Quellensteuer (27,5%)",        fields["998"]],
+                ["901", "Anrechenbare ausl. Quellensteuer (25%)",          fields["901"]],
             ],
             columns=["E1kv Field", "Meaning", "Amount EUR"],
         )
@@ -233,49 +302,59 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
         category_df = pd.DataFrame(
             [{"Category": name, "EUR": round(value, 2)} for name, value in result.category_totals.items()]
         )
-        st.bar_chart(category_df.set_index("Category"), color="#00D4FF", height=220)
+        st.bar_chart(category_df.set_index("Category"), color="#00D4FF", height=240)
 
-    st.download_button("Download E1kv CSV", _csv_bytes(mapping), "E1kv_Report_2026.csv", "text/csv")
+    year_label = str(result.tax_year) if result.tax_year else "unknown"
+    st.download_button(
+        "Download E1kv CSV",
+        _csv_bytes(mapping),
+        f"E1kv_Report_{year_label}.csv",
+        "text/csv",
+    )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    tax_year_label = str(result.tax_year) if result.tax_year else "unknown"
-    gross_kest = round(result.taxable_base * 0.275, 2)
-    with st.expander(f"KeSt Calculation Breakdown — Tax Year {tax_year_label}"):
+    gross_kest_27 = round(result.taxable_27 * 0.275, 2)
+    gross_kest_25 = round(result.taxable_25 * 0.25, 2)
+    with st.expander(f"KeSt Calculation Breakdown — Tax Year {year_label}"):
+        st.markdown("**27.5% basket** — stocks, derivatives, dividends, bond interest")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric(
-            "Taxable Basket",
-            _eur(result.taxable_base),
-            help="Sum of stock gains, derivative P/L, dividends, and interest. Losses within the basket offset gains before any tax is applied.",
-        )
-        c2.metric(
-            "Gross KeSt (×27.5%)",
-            _eur(gross_kest),
-            help="27.5% applied to the full taxable basket, before deducting any foreign tax credits.",
-        )
-        c3.metric(
-            "Foreign Tax Credit",
-            f"−{_eur(result.foreign_tax_credit)}",
-            help="Dividend withholding tax credited against Austrian KeSt, capped at 15% of gross dividends per DBA treaty rules (Austria–USA Art. 10 DBA). Enter on E1kv row 998.",
-        )
-        c4.metric(
-            "Net KeSt Due",
-            _eur(result.tax_due),
-            help="Your final Austrian KeSt liability: Gross KeSt minus the foreign tax credit. This is the amount to declare in FinanzOnline.",
-        )
+        c1.metric("Taxable", _eur(result.taxable_27),
+                  help="Gains − losses in the securities basket, floored at zero.")
+        c2.metric("Gross KeSt (×27.5%)", _eur(gross_kest_27))
+        c3.metric("WHT credit used", f"−{_eur(result.foreign_tax_credit_27)}",
+                  help="Foreign WHT credited against the 27.5% liability, capped at 15% of gross (DBA).")
+        c4.metric("Net 27.5%", _eur(max(0.0, gross_kest_27 - result.foreign_tax_credit_27)))
+
+        st.markdown("**25% basket** — bank/savings deposit interest")
+        d1, d2, d3, d4 = st.columns(4)
+        d1.metric("Taxable", _eur(result.taxable_25),
+                  help="Bank deposit interest only. Securities losses cannot offset this basket (§27a Abs. 2 EStG).")
+        d2.metric("Gross KeSt (×25%)", _eur(gross_kest_25))
+        d3.metric("WHT credit used", f"−{_eur(result.foreign_tax_credit_25)}")
+        d4.metric("Net 25%", _eur(max(0.0, gross_kest_25 - result.foreign_tax_credit_25)))
+
+        st.markdown("**Total**")
+        t1, t2 = st.columns(2)
+        t1.metric("Total KeSt Due", _eur(result.tax_due),
+                  help="Sum of net 27.5% and net 25% liability — declare in FinanzOnline.")
+        t2.metric("Non-creditable WHT", _eur(result.excess_wht),
+                  help="Foreign WHT Austria will not credit (DBA cap or basket-exhausted). Reclaim from source country.")
+
         st.caption(
             "⚠ Securities acquired before 1 January 2011 (derivatives / interest-bearing instruments: 31 March 2012) "
-            "are grandfathered and may be exempt from KeSt (§ 124b Z 185 EStG). "
-            "This engine cannot auto-detect pre-2011 acquisitions — review any long-held positions manually. "
-            "E1kv field numbers shown are reference numbers for the current tax year and are updated annually by BMF."
+            "are grandfathered under § 124b Z 185 EStG. Use the Pre-2011 Altbestand selector in the sidebar to "
+            "exclude them. ETF/Fund rows (incl. ausschüttungsgleiche Erträge, KZ 937) are not auto-calculated — "
+            "see the Manual ETF/Fund Queue below."
         )
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
     if not result.manual_processing.empty:
         st.warning(
-            "ETF/FUND rows detected — these require separate Austrian fund taxation review (OeKB reporting) "
-            "and are not included in the automatic KeSt calculation above."
+            "ETF/FUND rows detected — Austrian fund taxation (incl. ausschüttungsgleiche Erträge KZ 937, "
+            "Meldefonds vs. Schwarze Fonds) requires per-fund OeKB review and is NOT included in the "
+            "automatic KeSt calculation above."
         )
         st.dataframe(result.manual_processing, use_container_width=True)
 
@@ -304,7 +383,6 @@ def render_performance(result) -> None:
 
     st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-    # Chart 1 — Cumulative P/L Timeline
     st.markdown('<p class="perf-section-label">CUMULATIVE REALIZED P/L</p>', unsafe_allow_html=True)
 
     area = (
@@ -353,7 +431,6 @@ def render_performance(result) -> None:
     timeline = (area + line + zero_rule + points).properties(height=380).interactive()
     st.altair_chart(timeline, use_container_width=True)
 
-    # Charts 2 & 3 — side by side
     col1, col2 = st.columns(2)
 
     with col1:
@@ -463,7 +540,8 @@ def _perf_data(result) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
 
 def render_audit(result) -> None:
     st.subheader("Detailed Audit Trail")
-    st.caption("Trade-level EUR conversion, ECB FX source, cost-basis evolution, and realized P/L per line.")
+    st.caption("Trade-level EUR conversion, ECB FX source, cost-basis evolution, and realized P/L per line. "
+               "Each row shows its assigned E1kv Kennzahl.")
     if result.audit.empty:
         st.info("No taxable trade or cash income rows found in the uploaded statement.")
     else:
@@ -476,7 +554,8 @@ def render_audit(result) -> None:
         )
 
     st.subheader("Manual ETF/Fund Queue")
-    st.caption("Rows flagged for manual OeKB review — Austrian fund taxation requires per-fund reporting.")
+    st.caption("Rows flagged for manual OeKB review — Austrian fund taxation requires per-fund reporting. "
+               "Accumulating ETFs generate ausschüttungsgleiche Erträge (KZ 937, 27.5%) annually.")
     if result.manual_processing.empty:
         st.success("No FUND rows detected.")
     else:
