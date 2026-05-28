@@ -123,12 +123,13 @@ E1kv Kennzahl mapping — verified against the official **BMF E1kv 2024** form (
 
 | Kennzahl | Category | Basket | Note |
 |---|---|---|---|
-| `"994"` | Stock / ETF / bond realized gains | 27.5% | Moving-average realization (§27 Abs. 3 EStG) |
+| `"994"` | Foreign stock / ETF / bond realized gains (*ausländische Substanzgewinne*) | 27.5% | Moving-average realization (§27 Abs. 3 EStG). Domestic equivalent is KZ 981 — not used for foreign-broker accounts. |
 | `"892"` | Realized losses on securities and non-securitised derivatives | 27.5% | Reported separately so the Finanzamt can verify Verlustausgleich |
-| `"981"` | Non-securitised derivative gains (options, futures) | 27.5% | Securitised derivatives (warrants, certificates) belong in KZ 995/896 — out of scope |
-| `"863"` | Foreign dividends and bond coupon interest | 27.5% | Gross income (§27 Abs. 2 EStG) |
+| `"857"` | Non-securitised derivative gains — options, futures, FOPs (*Einkünfte aus nicht verbrieften Derivaten*) | 27.5% | Securitised derivatives (warrants, certificates — assetCategory WAR/IOPT) belong in KZ 995/896 and are routed to the manual queue. |
+| `"863"` | Foreign dividends (*Auslandsdividenden*) | 27.5% | Gross income only — bond coupon interest goes to KZ 409, not here. |
+| `"409"` | Foreign bond coupon interest (*Forderungswertpapiere*) | 27.5% | Separate from dividends. Same WHT credit pool (KZ 998). |
 | `"861"` | Foreign bank deposit interest | **25%** | Cannot be offset against securities losses |
-| `"998"` | Creditable foreign WHT, 27.5% basket | — | Capped at 15% of gross (DBA) |
+| `"998"` | Creditable foreign WHT, 27.5% basket | — | Capped at 15% of gross **per income type** — dividends and bond interest each get their own 15% cap; cross-subsidy between the two pools is not allowed. |
 | `"901"` | Creditable foreign WHT, 25% basket | — | Rare (bank-deposit WHT) |
 
 `PRE-2011 EXEMPT` is an internal audit-only marker — rows tagged this way are excluded from every Kennzahl (see Altbestand section below).
@@ -150,12 +151,12 @@ Within each basket: gains net against losses in the same calendar year. Across b
 
 ### Foreign Withholding Tax Credit Cap
 
-Under most Austrian DBA treaties (Austria–USA Art. 10, etc.), the maximum creditable foreign dividend withholding is **15% of the gross 27.5%-basket income**. Higher source-country withholding (e.g. 30% with no W-8BEN) is capped at 15% and the excess is surfaced via `TaxResult.excess_wht`.
+Under most Austrian DBA treaties (Austria–USA Art. 10, etc.), the maximum creditable foreign dividend withholding is **15% of the gross income**. The cap is applied **per income type** — dividends and bond coupons each get their own 15% headroom. Pooling them would let unused dividend-cap room over-credit bond WHT that Austria will not actually allow. Higher source-country withholding (e.g. 30% with no W-8BEN, or 25% on bond coupons with no DBA relief) is capped and the excess is surfaced via `TaxResult.excess_wht`.
 
 ```python
-gross_27_for_cap   = max(0.0, dividend_total) + max(0.0, bond_interest_total)
-max_creditable_27  = gross_27_for_cap * DBA_DIVIDEND_CAP
-creditable_wht_27  = min(abs(dividend_wht) + abs(bond_wht), max_creditable_27)
+cap_div            = max(0.0, dividend_total)      * DBA_DIVIDEND_CAP
+cap_bond           = max(0.0, bond_interest_total) * DBA_DIVIDEND_CAP
+creditable_wht_27  = min(abs(dividend_wht), cap_div) + min(abs(bond_wht), cap_bond)
 ```
 
 `TaxResult.excess_wht` aggregates: (a) the amount above the DBA cap, (b) the amount above the Austrian tax actually owed in each basket. Per §46 EStG this excess cannot be carried forward — the user must reclaim it from the source country (e.g. IRS Form 1040-NR for US WHT above 15%).
@@ -377,3 +378,8 @@ python smoke_test.py
 - Do not lump bank-deposit interest into the 27.5% basket. Bank interest is taxed at 25% (§27a Abs. 2 EStG) and cannot be offset against securities losses. The parser must classify "Credit Interest" / "Debit Interest" / "Broker Interest" into `ParsedData.bank_interest`, separate from `bond_interest`.
 - Do not net gains against losses before emitting Kennzahlen. KZ 994 (gains) and KZ 892 (losses) must be reported separately so the Finanzamt can verify Verlustausgleich.
 - Do not silently discard non-creditable foreign WHT. Surface it via `TaxResult.excess_wht` so the user can reclaim from the source country.
+- Do not route non-securitised derivative gains to KZ 981. KZ 981 is for *inländische* (domestic) substance gains only. Foreign-broker option/futures gains belong in **KZ 857** (`Einkünfte aus nicht verbrieften Derivaten`).
+- Do not lump bond coupon interest into KZ 863. KZ 863 is *Auslandsdividenden* only. Foreign bond coupons go to **KZ 409** (`Forderungswertpapiere`).
+- Do not auto-file securitised derivatives (WAR, IOPT) as KZ 857. They belong in KZ 995/896 (out of scope) — route them to the manual review queue (`ParsedData.funds`).
+- Do not run the engine over a multi-year statement. §27a EStG forbids cross-year offsets for private investors. Use `years_in_parsed()` and reject when more than one year is present, instructing the user to export one Flex Query per year.
+- Do not pool the foreign WHT cap across dividends and bond interest. The 15% DBA cap is applied per income type; pooling allows illegal cross-subsidy.

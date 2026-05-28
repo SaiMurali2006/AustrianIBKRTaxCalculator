@@ -1,10 +1,11 @@
 """Austrian KESt engine — broker-agnostic, operates on ParsedData.
 
 E1kv Kennzahl mapping (foreign broker, e.g. IBKR):
-  994  realized capital gains, stocks/ETFs/bonds (27.5%)
+  994  ausländische Substanzgewinne — stocks/ETFs/bonds (27.5%)
   892  realized capital losses, stocks/ETFs/bonds and non-securitised derivatives (27.5%)
-  981  derivative gains, non-securitised (27.5%)
-  863  foreign dividends and bond-coupon interest (27.5%)
+  857  Einkünfte aus nicht verbrieften Derivaten — options/futures/FOP gains (27.5%)
+  863  foreign dividends (27.5%)
+  409  foreign bond coupon interest — Forderungswertpapiere (27.5%)
   861  foreign bank deposit interest (25%)
   998  creditable foreign withholding tax (27.5% basket)
   901  creditable foreign withholding tax (25% basket)
@@ -162,7 +163,7 @@ class DerivativeProcessor:
             pnl_eur, fx = self.fx_provider.convert(pnl_original, currency, trade_date, trade.get("fxRateToBase"))
             if pnl_eur > 0:
                 gain_total += pnl_eur
-                field = "981"
+                field = "857"
             elif pnl_eur < 0:
                 loss_total += pnl_eur
                 field = "892"
@@ -212,19 +213,24 @@ class TaxAggregator:
             parsed.dividends, "DIV", gross_field="863", tax_field="998"
         )
         bond_interest_total, bond_wht, bond_audit = self._cash_income(
-            parsed.bond_interest, "BOND_INT", gross_field="863", tax_field="998"
+            parsed.bond_interest, "BOND_INT", gross_field="409", tax_field="998"
         )
         bank_interest_total, bank_wht, bank_audit = self._cash_income(
             parsed.bank_interest, "BANK_INT", gross_field="861", tax_field="901"
         )
 
-        # Foreign WHT credit cap. Dividends → 15% per DBA (Austria–USA Art. 10 etc.).
-        # Bond interest typically 0–10% (US DBA: 0%); we conservatively cap aggregated
-        # bond WHT at 15% of bond income too, and surface excess via excess_wht.
-        gross_27_for_cap = max(0.0, dividend_total) + max(0.0, bond_interest_total)
-        max_creditable_27 = gross_27_for_cap * DBA_DIVIDEND_CAP
+        # Foreign WHT credit cap — applied PER income type, not as a single pool.
+        # Dividends → 15% per DBA (Austria–USA Art. 10, OECD model). Bond coupons under
+        # most DBA treaties are 0–10% (US DBA: 0%); we conservatively cap each separately
+        # at 15% of its own gross income and route the excess to excess_wht for source-
+        # country reclaim. Pooling would let unused dividend-cap headroom over-credit
+        # bond WHT that Austria will not actually allow.
+        cap_div = max(0.0, dividend_total) * DBA_DIVIDEND_CAP
+        cap_bond = max(0.0, bond_interest_total) * DBA_DIVIDEND_CAP
+        creditable_wht_div = min(abs(dividend_wht), cap_div)
+        creditable_wht_bond = min(abs(bond_wht), cap_bond)
+        creditable_wht_27 = creditable_wht_div + creditable_wht_bond
         raw_wht_27 = abs(dividend_wht) + abs(bond_wht)
-        creditable_wht_27 = min(raw_wht_27, max_creditable_27)
         excess_wht_above_cap = raw_wht_27 - creditable_wht_27
 
         creditable_wht_25 = abs(bank_wht)
@@ -268,8 +274,9 @@ class TaxAggregator:
         fields = {
             "994": round(stock_gain, 2),
             "892": round(abs(stock_loss + deriv_loss), 2),
-            "981": round(deriv_gain, 2),
-            "863": round(dividend_total + bond_interest_total, 2),
+            "857": round(deriv_gain, 2),
+            "863": round(dividend_total, 2),
+            "409": round(bond_interest_total, 2),
             "861": round(bank_interest_total, 2),
             "998": round(creditable_wht_27, 2),
             "901": round(creditable_wht_25, 2),
@@ -322,7 +329,13 @@ class TaxAggregator:
             amount_eur, fx = self.fx_provider.convert(
                 amount, str(item["currency"]), str(item["date"]), item.get("fxRateToBase")
             )
-            is_tax = amount < 0 and "withholding" in f"{item.get('type', '')} {item.get('description', '')}".lower()
+            # WHT identified by IBKR type="Withholding Tax" — sign-agnostic so reversal
+            # rows (positive amount) naturally subtract from the WHT pool via tax_total.
+            type_str = str(item.get("type", "")).strip().lower()
+            desc_str = str(item.get("description", "")).lower()
+            is_tax = type_str == "withholding tax" or (
+                "withholding" in f"{type_str} {desc_str}" and amount < 0
+            )
             if is_tax:
                 tax_total += amount_eur
                 pnl = 0.0
@@ -372,6 +385,24 @@ class TaxAggregator:
         result.audit.to_csv(paths["audit"], index=False)
         result.manual_processing.to_csv(paths["manual"], index=False)
         return paths
+
+
+def years_in_parsed(parsed: ParsedData) -> list[int]:
+    """Distinct calendar years across all trades + cash. Used to enforce one tax year per
+    run (§27a EStG — no Verlustvortrag across years for private investors)."""
+    frames = [
+        parsed.stocks, parsed.options,
+        parsed.dividends, parsed.bond_interest, parsed.bank_interest, parsed.cash_other,
+    ]
+    years: set[int] = set()
+    for df in frames:
+        if df.empty or "date" not in df.columns:
+            continue
+        for raw in df["date"].dropna().astype(str):
+            head = raw[:4]
+            if head.isdigit():
+                years.add(int(head))
+    return sorted(years)
 
 
 def _trade_action(trade: dict | pd.Series, signed_qty: float) -> str:

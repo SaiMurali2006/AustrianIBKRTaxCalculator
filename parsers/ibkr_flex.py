@@ -40,10 +40,19 @@ def parse(source: str | Path | bytes) -> ParsedData:
         cash_df["type"] = cash_df["type"].fillna("")
         cash_df["description"] = cash_df["description"].fillna("")
 
+    # Non-securitised derivatives (OPT, FOP) → KZ 857 in the tax engine.
+    # Securitised derivatives (WAR, IOPT — warrants, certificates) belong in KZ 995/896
+    # which we do not auto-calculate; route them to the manual queue instead of silently
+    # filing them as non-securitised.
     _known = {"STK", "OPT", "FOP", "WAR", "IOPT", "FUND"}
     stocks = trades_df[trades_df["assetCategory"].eq("STK")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
     options = (
-        trades_df[trades_df["assetCategory"].isin(["OPT", "FOP", "WAR", "IOPT"])].copy()
+        trades_df[trades_df["assetCategory"].isin(["OPT", "FOP"])].copy()
+        if not trades_df.empty
+        else _empty(TRADE_COLUMNS)
+    )
+    _securitised_deriv = (
+        trades_df[trades_df["assetCategory"].isin(["WAR", "IOPT"])].copy()
         if not trades_df.empty
         else _empty(TRADE_COLUMNS)
     )
@@ -51,20 +60,34 @@ def parse(source: str | Path | bytes) -> ParsedData:
     # so they are never silently excluded from the user's attention.
     _fund_rows = trades_df[trades_df["assetCategory"].eq("FUND")].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
     _unknown_rows = trades_df[~trades_df["assetCategory"].isin(_known)].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
-    funds = pd.concat([_fund_rows, _unknown_rows], ignore_index=True)
+    funds = pd.concat([_fund_rows, _securitised_deriv, _unknown_rows], ignore_index=True)
 
     dividends = _cash_filter(cash_df, ["dividend", "payment in lieu", "withholding"])
-    # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 863).
-    # IBKR "Credit Interest" / "Debit Interest" / "Broker Interest" on idle cash → bank deposit (25%).
-    # Bond coupons / accrued interest → securities-basket 27.5%.
-    bank_interest = _cash_filter(cash_df, ["credit interest", "debit interest", "broker interest", "interest on cash"])
+    # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 409).
+    # Prefer the IBKR `type` attribute — it is authoritative. Fall back to description match
+    # for older Flex exports that left `type` blank.
+    #   Bank-deposit types: "Broker Interest Received/Paid", "Deposit Interest", "Credit Interest"
+    #   Bond-coupon types: "Bond Interest Received/Paid", "Bond Coupon Payment"
+    bank_interest = _interest_by_type(
+        cash_df,
+        types={"broker interest received", "broker interest paid", "deposit interest", "credit interest", "debit interest"},
+        desc_keywords=["credit interest", "debit interest", "broker interest", "deposit interest", "interest on cash"],
+    )
+    bond_interest = _interest_by_type(
+        cash_df,
+        types={"bond interest received", "bond interest paid", "bond coupon payment", "bond coupon"},
+        desc_keywords=["bond interest", "bond coupon", "coupon payment", "accrued interest"],
+    )
+    # Anything still labelled "interest" that the above did not catch: default to bond-coupon
+    # bucket (27.5%) — safer than dumping into bank (25%) since bank rules forbid offset.
     interest_all = _cash_filter(cash_df, ["interest"])
-    bond_interest = (
-        interest_all.drop(index=bank_interest.index, errors="ignore").copy()
+    leftover_interest = (
+        interest_all.drop(index=bank_interest.index.union(bond_interest.index), errors="ignore").copy()
         if not interest_all.empty
         else _empty(CASH_COLUMNS)
     )
-    consumed = dividends.index.union(interest_all.index)
+    bond_interest = pd.concat([bond_interest, leftover_interest], ignore_index=False)
+    consumed = dividends.index.union(interest_all.index).union(bank_interest.index).union(bond_interest.index)
     cash_other = (
         cash_df.drop(index=consumed, errors="ignore").copy()
         if not cash_df.empty
@@ -129,6 +152,22 @@ def _normalise_cash(attrs: dict[str, str]) -> dict[str, object]:
         "type": attrs.get("type", ""),
         "tax": _num(attrs.get("tax")),
     }
+
+
+def _interest_by_type(
+    df: pd.DataFrame,
+    types: set[str],
+    desc_keywords: list[str],
+) -> pd.DataFrame:
+    if df.empty:
+        return _empty(CASH_COLUMNS)
+    type_lower = df["type"].fillna("").str.strip().str.lower()
+    desc_lower = df["description"].fillna("").str.lower()
+    by_type = type_lower.isin(types)
+    # description fallback only when type is blank
+    desc_pattern = "|".join(desc_keywords) if desc_keywords else ""
+    by_desc = type_lower.eq("") & desc_lower.str.contains(desc_pattern, regex=True) if desc_pattern else False
+    return df[by_type | by_desc].copy()
 
 
 def _cash_filter(df: pd.DataFrame, needles: Iterable[str]) -> pd.DataFrame:

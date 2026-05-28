@@ -10,7 +10,7 @@ import streamlit as st
 from currency_provider import ECBRateProvider
 from parsers import BROKER_REGISTRY, BROKER_SAMPLES, get_parser
 from styles import FINTECH_CSS
-from tax_engine import TaxAggregator
+from tax_engine import TaxAggregator, years_in_parsed
 
 
 _ALTAIR_THEME = {
@@ -103,6 +103,17 @@ def main() -> None:
             st.session_state[parse_key] = get_parser(broker)(xml_payload)
     parsed = st.session_state[parse_key]
 
+    years = years_in_parsed(parsed)
+    if len(years) > 1:
+        st.error(
+            f"Statement spans multiple tax years: {', '.join(str(y) for y in years)}. "
+            "Austrian §27a EStG forbids cross-year loss offsets for private investors — "
+            "each year must be filed independently. Export one IBKR Flex Query per year "
+            "(set the period to a single calendar year) and re-upload.",
+            icon="🛑",
+        )
+        return
+
     with st.sidebar:
         excluded_isins = _altbestand_selector(parsed)
         export_clicked = st.button(
@@ -178,10 +189,11 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
             "(Gleitender Durchschnittspreis). Report on E1kv row 994 (27.5% basket). ◦ Source: bmf.gv.at",
         ),
         (
-            "purple", "Field 981", "Derivative gains", fields["981"],
-            "Net gains on non-securitised derivatives (options, futures). "
-            "Securitised derivatives (warrants, certificates) belong in KZ 995/896 — out of scope here. "
-            "Report on E1kv row 981 (27.5% basket). ◦ Source: bmf.gv.at / EStG §27",
+            "purple", "Field 857", "Derivative gains", fields["857"],
+            "Einkünfte aus nicht verbrieften Derivaten — net gains on options, futures, FOPs "
+            "from a foreign depot. Securitised derivatives (warrants, certificates) belong in "
+            "KZ 995/896 and are routed to the manual queue. "
+            "Report on E1kv row 857 (27.5% basket). ◦ Source: bmf.gv.at / EStG §27",
         ),
         (
             "red", "Field 892", "Realized losses", fields["892"],
@@ -190,9 +202,10 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
             "Report on E1kv row 892. ◦ Source: bmf.gv.at",
         ),
         (
-            "green", "Field 863", "Foreign dividends + bond int.", fields["863"],
-            "Gross foreign dividends and bond-coupon interest before any tax deduction. "
-            "Foreign withholding tax is tracked separately in Field 998. Report on E1kv row 863. ◦ Source: bmf.gv.at",
+            "green", "Field 863", "Foreign dividends", fields["863"],
+            "Gross foreign dividends before any tax deduction. Bond coupon interest is reported "
+            "separately in Field 409. Foreign withholding tax is tracked in Field 998. "
+            "Report on E1kv row 863. ◦ Source: bmf.gv.at",
         ),
         (
             "gold", "Field 998", "Creditable WHT (27.5%)", fields["998"],
@@ -286,13 +299,14 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
         st.caption("E1KV FIELD MAPPING")
         mapping = pd.DataFrame(
             [
-                ["994", "Aktien/ETF/Anleihen realisierte Gewinne (27,5%)", fields["994"]],
-                ["892", "Realisierte Verluste (27,5%)",                    fields["892"]],
-                ["981", "Derivate Gewinne (27,5%)",                        fields["981"]],
-                ["863", "Auslandsdividenden + Anleihezinsen (27,5%)",      fields["863"]],
-                ["861", "Auslaendische Sparbuchzinsen (25%)",              fields["861"]],
-                ["998", "Anrechenbare ausl. Quellensteuer (27,5%)",        fields["998"]],
-                ["901", "Anrechenbare ausl. Quellensteuer (25%)",          fields["901"]],
+                ["994", "Auslaend. Substanzgewinne Aktien/ETF/Anleihen (27,5%)", fields["994"]],
+                ["892", "Realisierte Verluste (27,5%)",                          fields["892"]],
+                ["857", "Eink. aus nicht verbrieften Derivaten (27,5%)",         fields["857"]],
+                ["863", "Auslandsdividenden (27,5%)",                            fields["863"]],
+                ["409", "Auslaend. Anleihezinsen / Forderungswertpapiere (27,5%)", fields["409"]],
+                ["861", "Auslaend. Sparbuch-/Bankzinsen (25%)",                  fields["861"]],
+                ["998", "Anrechenbare ausl. Quellensteuer (27,5%)",              fields["998"]],
+                ["901", "Anrechenbare ausl. Quellensteuer (25%)",                fields["901"]],
             ],
             columns=["E1kv Field", "Meaning", "Amount EUR"],
         )
@@ -497,7 +511,10 @@ def render_performance(result) -> None:
 
 
 def _perf_data(result) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    audit = result.audit[result.audit["category"].isin(["STK", "OPT"])].copy()
+    audit = result.audit[
+        result.audit["category"].isin(["STK", "OPT"])
+        & (result.audit["e1kv_field"] != "PRE-2011 EXEMPT")
+    ].copy()
     audit["_date"] = pd.to_datetime(audit["date"], format="%Y%m%d", errors="coerce")
     audit["realized_pnl_eur"] = pd.to_numeric(audit["realized_pnl_eur"], errors="coerce").fillna(0.0)
     audit["commission_eur"] = pd.to_numeric(audit["commission_eur"], errors="coerce").fillna(0.0)
