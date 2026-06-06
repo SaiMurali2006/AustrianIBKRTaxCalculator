@@ -2,7 +2,9 @@
 
 ## Project Purpose
 
-Streamlit dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt — 27.5% securities basket, 25% bank-deposit basket), and maps results to E1kv form Kennzahlen using the codes from the official BMF E1kv 2024 form. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
+Web dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt — 27.5% securities basket, 25% bank-deposit basket), and maps results to E1kv form Kennzahlen using the codes from the official BMF E1kv 2024 form. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
+
+The UI is a **React + TypeScript** app (Apex Design Language — see `Design.md`) talking to a thin **FastAPI** backend that wraps the frozen Python tax engine. The legacy Streamlit UI (`app.py` + `styles.py`) was retired in this migration.
 
 ---
 
@@ -22,10 +24,18 @@ Broker Statement (any format)
         ↓
   models.TaxResult
         ↓
-  app.py   Streamlit UI (broker selector → parse → calculate → render)
+  backend/ (FastAPI)   serializes ParsedData/TaxResult → JSON (NO tax logic)
+        ↓
+  frontend/ (React + TS + plain CSS)   Apex Design Language UI
 ```
 
 The canonical boundary is `models.ParsedData`. Any broker parser must produce this object. The tax engine and UI must never import broker-specific code.
+
+### Two-tier split (since the Apex UI migration)
+
+The Python side (`models.py`, `parsers/`, `tax_engine.py`, `currency_provider.py`) is a **frozen library** — the single source of truth for all tax/E1kv logic. `backend/` is a thin FastAPI layer that only parses → serializes; it must add **no** tax logic (no E1kv mapping, no rate math). `frontend/` is a Vite + React + TypeScript app implementing the **Apex Design Language** (`Design.md`): `color-mix()` token theme, live light/dark/system + accent switcher, ECharts.
+
+See **Design.md** for the binding visual contract (tokens, type/radius/motion scales, component specs). Its anti-patterns are hard rules: no hardcoded hex in a component, no `font-weight < 700` for UI text, no radius outside `{18,14,12,10,8,6}`, and **never** pass `var(--x)` strings into an ECharts canvas — resolve them with `cssVar()` (see `frontend/src/theme/chartTheme.ts`).
 
 ---
 
@@ -38,9 +48,15 @@ The canonical boundary is `models.ParsedData`. Any broker parser must produce th
 | `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML`; reads `Trade`, `CashTransaction`, `CorporateAction` nodes; splits PIL into its own bucket | `models`, stdlib, pandas |
 | `tax_engine.py` | `ParsedData` → `TaxResult`; broker-agnostic | `models`, `currency_provider` |
 | `currency_provider.py` | EUR conversion, ECB cache | stdlib only |
-| `app.py` | Streamlit UI; two-step session cache (parse + calc); three-view nav; Altair charts; Altbestand selector | `parsers`, `tax_engine`, `styles`, `currency_provider`, `altair`, `hashlib` |
-| `styles.py` | Dark FinTech CSS string | nothing |
+| `backend/main.py` | FastAPI: `/api/brokers`, `/api/parse`, `/api/calculate`, `/api/export/{kind}`; in-memory md5 two-step cache (parse keyed by content hash, calc keyed additionally by options) | `parsers`, `tax_engine`, `currency_provider`, `models`, `.serialize`, `fastapi` |
+| `backend/serialize.py` | DataFrame/dataclass → JSON; `parsed_summary`, `result_to_json`, and the `performance` block (1:1 port of the old `_perf_data`). No tax logic | `models`, pandas |
+| `frontend/src/theme/` | `tokens.css` (Design.md §3.2 verbatim + globals), `ThemeProvider.tsx`, `onAccent.ts`, `chartTheme.ts` | — |
+| `frontend/src/components/` | Apex primitives: `AppShell` (+LogoBadge/ThemePopover/SegmentedControl), `primitives.tsx`, `Chart.tsx` (ECharts), `icons.tsx` | theme |
+| `frontend/src/views/` | `Controls`, `ExecutiveSummary`, `AuditTrail`, `Performance` | components, api |
+| `frontend/src/api/client.ts` | typed fetch wrapper + result types | — |
 | `smoke_test.py` | Engine verification with structural and directional value assertions | `parsers`, `tax_engine` |
+
+> `app.py` + `styles.py` (Streamlit) were **removed** in the Apex migration. Do not recreate a Python UI; the frontend owns all rendering.
 
 ---
 
@@ -251,19 +267,9 @@ Cache lives at `.cache/ecb_rates.json` (gitignored). Every converted value carri
 
 ## UI / Styling
 
-Dark FinTech theme defined entirely in `styles.py`. Injected via `st.markdown(..., unsafe_allow_html=True)`.
-
-Category → accent color:
-
-| Category | Color | Hex |
-|---|---|---|
-| Stocks | Cyan | `#00D4FF` |
-| Derivatives | Purple | `#BB86FC` |
-| Dividends / Interest | Green | `#00FF88` |
-| ETF / Funds | Gold | `#FFD700` |
-| Tax due | Red | `#FF4D6D` |
-
-CSS classes to reuse: `.metric-grid`, `.card-wrap`, `.tax-card`, `.status-pill`, `.perf-section-label`. No inline styles in `app.py` — all visual rules belong in `styles.py`.
+> **Current UI is the React frontend** (`frontend/`), styled by the **Apex Design Language** — `Design.md` is the binding contract. There are no hardcoded category hex colors; every surface derives from the user's `--accent` via `color-mix()`, and semantic values use `--positive` / `--danger`. The three views (Executive Summary, Detailed Audit Trail, Performance) live in `frontend/src/views/`; charts are ECharts (`Chart.tsx` + `chartTheme.ts`), not Altair.
+>
+> **The subsections below (Streamlit/Altair specifics) are historical** — they describe the retired `app.py` + `styles.py` UI and are kept only as a record of the prior behavior the React app reached parity with. Do not implement against them.
 
 ### Three-view navigation
 
@@ -355,25 +361,34 @@ Standard library only beyond these. Do not add dependencies without a strong rea
 
 ## Running Locally
 
+Two processes. **Backend** (FastAPI, from the repo root so the frozen library's absolute imports resolve):
+
 ```powershell
 .\venv\Scripts\Activate.ps1
-streamlit run app.py
+uvicorn backend.main:app --reload --port 8000
 ```
 
-Smoke test (no Streamlit):
+**Frontend** (Vite dev server; proxies `/api` → `127.0.0.1:8000`):
 
 ```powershell
-python smoke_test.py
+npm install --prefix frontend   # first run only
+npm run dev --prefix frontend   # http://localhost:5173
 ```
+
+Type-check + production build: `npm run build --prefix frontend`.
+
+Smoke test (engine only, no server): `python smoke_test.py`.
 
 ---
 
 ## What NOT to Do
 
-- Do not put broker-specific parsing logic in `tax_engine.py` or `app.py`.
-- Do not put tax calculation logic in any parser.
+- Do not put broker-specific parsing logic in `tax_engine.py`, `backend/`, or the frontend.
+- Do not put tax calculation logic in any parser, in `backend/`, or in the frontend — the Python engine is the single source of truth; `backend/serialize.py` only reshapes what it computed.
 - Do not hardcode currency conversion logic outside `currency_provider.py`.
-- Do not store secrets in code — use `.streamlit/secrets.toml` (gitignored).
+- Do not hardcode a hex color in a frontend component, use `font-weight < 700` for UI text, or pass `var(--token)` strings into an ECharts canvas — see `Design.md` anti-patterns.
+- Do not reintroduce a Python/Streamlit UI (`app.py`/`styles.py` are retired) — all rendering lives in `frontend/`.
+- Do not store secrets in code — use environment variables / a gitignored `.env` (never commit).
 - Do not commit `.cache/`, generated CSV reports, or `venv/`.
 - Do not add E1kv field mapping outside `tax_engine.py`.
 - Do not import from `parsers/ibkr_flex.py` directly — always go through `parsers.get_parser()`.

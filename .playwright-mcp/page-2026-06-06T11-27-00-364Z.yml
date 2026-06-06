@@ -1,0 +1,32 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - button "Theme settings" [ref=e7] [cursor=pointer]: K
+      - generic [ref=e8]: KeSt Engine
+    - navigation [ref=e9]:
+      - button "Executive Summary" [ref=e10] [cursor=pointer]:
+        - img
+        - generic [ref=e12]: Executive Summary
+      - button "Detailed Audit Trail" [ref=e13] [cursor=pointer]:
+        - img
+        - generic [ref=e15]: Detailed Audit Trail
+      - button "Performance" [ref=e16] [cursor=pointer]:
+        - img
+        - generic [ref=e18]: Performance
+  - main [ref=e19]:
+    - generic [ref=e21]:
+      - generic [ref=e22]:
+        - generic [ref=e23]: Broker
+        - combobox [ref=e24]
+      - generic [ref=e25]:
+        - generic [ref=e26]: Statement file (XML)
+        - button "Choose file…" [ref=e27] [cursor=pointer]:
+          - img [ref=e28]
+          - text: Choose file…
+      - generic [ref=e30]:
+        - generic [ref=e33] [cursor=pointer]: Use embedded sample
+        - generic [ref=e36] [cursor=pointer]: Include fees in tax basis
+    - generic [ref=e37]:
+      - img [ref=e39]
+      - generic [ref=e41]: Upload a statement to begin
+      - generic [ref=e42]: Choose an IBKR Flex Query XML export, or enable the embedded sample to preview the dashboard.

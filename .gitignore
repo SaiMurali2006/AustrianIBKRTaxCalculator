@@ -28,6 +28,12 @@ E1kv_Report_*.csv
 transaction_audit.csv
 manual_processing_required.csv
 
+# Frontend (React/Vite)
+node_modules/
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
 # Logs
 *.log
 

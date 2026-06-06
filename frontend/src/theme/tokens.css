@@ -1,0 +1,116 @@
+/* Apex Design Language — tokens + globals. Per Design.md §3,§5,§6,§9,§10.
+   Every surface is color-mix(inverse <lift%>, color-mix(accent <pct%>, base)).
+   No component may hardcode a hex; consume var(--token) only. */
+
+:root {
+  /* user input — overwritten inline by ThemeProvider */
+  --accent: #7c73ff;
+
+  /* dark mode bases (default) */
+  --base: #0a0b10;
+  --inverse: #ffffff;
+
+  /* surfaces */
+  --bg:         color-mix(in srgb, var(--inverse) 0%,  color-mix(in srgb, var(--accent) 3%,  var(--base)));
+  --bg-alt:     color-mix(in srgb, var(--inverse) 0%,  color-mix(in srgb, var(--accent) 2%,  var(--base)));
+  --panel:      color-mix(in srgb, var(--inverse) 3%,  color-mix(in srgb, var(--accent) 5%,  var(--base)));
+  --card:       color-mix(in srgb, var(--inverse) 4%,  color-mix(in srgb, var(--accent) 4%,  var(--base)));
+  --card-hover: color-mix(in srgb, var(--inverse) 8%,  color-mix(in srgb, var(--accent) 8%,  var(--base)));
+  --input:      color-mix(in srgb, var(--inverse) 0%,  color-mix(in srgb, var(--accent) 3%,  var(--base)));
+  --line:       color-mix(in srgb, var(--inverse) 8%,  color-mix(in srgb, var(--accent) 8%,  var(--base)));
+  --line-soft:  color-mix(in srgb, var(--inverse) 5%,  color-mix(in srgb, var(--accent) 5%,  var(--base)));
+
+  /* accent-derived */
+  --accent-alt:    color-mix(in srgb, white 18%, var(--accent));
+  --accent-soft:   color-mix(in srgb, var(--inverse) 4%, color-mix(in srgb, var(--accent) 18%, var(--base)));
+  --accent-subtle: color-mix(in srgb, var(--inverse) 2%, color-mix(in srgb, var(--accent) 8%,  var(--base)));
+
+  /* auto-contrast (set inline per accent) */
+  --on-accent: #ffffff;
+
+  /* fixed-per-theme text + semantic (dark) */
+  --text: #f1f3f8;
+  --muted: #8c90a2;
+  --danger: #ff5c78;
+  --danger-soft: #361822;
+  --positive: #34d399;
+  --positive-soft: #0e2a22;
+
+  /* radius scale (§6) — never invent a radius */
+  --r-shell: 18px;
+  --r-panel: 14px;
+  --r-ctl: 12px;
+  --r-icon: 10px;
+  --r-pill: 8px;
+  --r-track: 6px;
+
+  /* motion (§9) */
+  --ease-press: cubic-bezier(0.4, 0, 1, 1);
+  --ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* fonts (§5) */
+  --font: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --mono: "Cascadia Code", "Cascadia Mono", Consolas, ui-monospace, monospace;
+
+  color-scheme: dark;
+}
+
+:root[data-mode="light"] {
+  --base: #ffffff;
+  --inverse: #14151f;
+  --panel: color-mix(in srgb, var(--inverse) 0%, color-mix(in srgb, var(--accent) 0%, var(--base)));
+  --card:  color-mix(in srgb, var(--inverse) 0%, color-mix(in srgb, var(--accent) 0%, var(--base)));
+  --bg:    color-mix(in srgb, var(--inverse) 3%, color-mix(in srgb, var(--accent) 7%, var(--base)));
+  --text: #16171f;
+  --muted: #6e7188;
+  --danger: #d63255;  --danger-soft: #fbe3e9;
+  --positive: #0e9f6e; --positive-soft: #e3f9f0;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+html, body, #root { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+/* focus ring (§10) — never the browser default */
+:focus-visible {
+  outline: 1.5px dashed var(--accent);
+  outline-offset: 3px;
+  border-radius: var(--r-panel);
+}
+
+/* scrollbars (§10) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--line) 75%, transparent) transparent;
+}
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--line) 75%, transparent);
+  border-radius: 4px; border: 2px solid transparent; background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: color-mix(in srgb, var(--accent) 90%, transparent); background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:active { background: var(--accent-alt); background-clip: padding-box; }
+
+/* motion primitives (§9) */
+@keyframes apex-rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes apex-pop  { from { opacity: 0; transform: scale(0.6); } to { opacity: 1; transform: scale(1); } }
+@keyframes apex-scale-in { from { opacity: 0; transform: scale(0.86); } to { opacity: 1; transform: scale(1); } }
+@keyframes apex-value-pulse { from { opacity: 0.25; transform: scale(1.14); } to { opacity: 1; transform: scale(1); } }
+@keyframes apex-view { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}

@@ -1,4 +1,5 @@
+# Frozen tax engine + FastAPI backend. The UI is the React app in frontend/ (see Design.md).
 pandas>=2.2
-streamlit>=1.35
-altair>=5
-
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

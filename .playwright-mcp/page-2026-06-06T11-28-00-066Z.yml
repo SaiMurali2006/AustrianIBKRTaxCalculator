@@ -1,0 +1,133 @@
+- generic [ref=e3]:
+  - complementary [ref=e4]:
+    - generic [ref=e5]:
+      - generic [ref=e6]:
+        - button "Theme settings" [ref=e7] [cursor=pointer]: K
+        - generic [ref=e143]:
+          - generic [ref=e144]: Appearance
+          - tablist [ref=e145]:
+            - tab "Light" [ref=e146] [cursor=pointer]
+            - tab "Dark" [selected] [ref=e147] [cursor=pointer]
+            - tab "System" [ref=e148] [cursor=pointer]
+          - generic [ref=e149]: Accent
+          - generic [ref=e150]:
+            - button "violet" [ref=e151] [cursor=pointer]
+            - button "azure" [ref=e152] [cursor=pointer]
+            - button "teal" [ref=e153] [cursor=pointer]
+            - button "green" [ref=e154] [cursor=pointer]
+            - button "amber" [active] [ref=e155] [cursor=pointer]
+            - button "coral" [ref=e156] [cursor=pointer]
+            - button "magenta" [ref=e157] [cursor=pointer]
+            - button "neutral" [ref=e158] [cursor=pointer]
+          - generic [ref=e159]: Custom hex
+          - textbox [ref=e160]: "#f59e0b"
+      - generic [ref=e8]: KeSt Engine
+    - navigation [ref=e9]:
+      - button "Executive Summary" [ref=e10] [cursor=pointer]:
+        - img [ref=e161]
+        - generic [ref=e12]: Executive Summary
+      - button "Detailed Audit Trail" [ref=e13] [cursor=pointer]:
+        - img [ref=e162]
+        - generic [ref=e15]: Detailed Audit Trail
+      - button "Performance" [ref=e16] [cursor=pointer]:
+        - img [ref=e163]
+        - generic [ref=e18]: Performance
+  - main [ref=e19]:
+    - generic [ref=e43]:
+      - img [ref=e44]
+      - generic [ref=e47]: Showing embedded sample data — upload your own statement to calculate real results.
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - generic [ref=e23]: Broker
+          - combobox [ref=e24]:
+            - option "IBKR Flex XML" [selected]
+        - generic [ref=e25]:
+          - generic [ref=e26]: Statement file (XML)
+          - button "Choose file…" [ref=e27] [cursor=pointer]:
+            - img [ref=e28]
+            - text: Choose file…
+        - generic [ref=e30]:
+          - generic [ref=e33] [cursor=pointer]: Use embedded sample
+          - generic [ref=e36] [cursor=pointer]: Include fees in tax basis
+      - generic [ref=e48]:
+        - generic [ref=e49]: Pre-2011 Altbestand (exempt — §124b Z 185 EStG)
+        - button "AAPL — US0378331005" [ref=e51] [cursor=pointer]
+    - generic [ref=e52]:
+      - generic [ref=e53]: Austria E1kv Digital Tax Report
+      - heading "Capital Gains Tax Dashboard" [level=1] [ref=e54]
+      - paragraph [ref=e55]: Stocks, options, dividends and interest mapped into the Austrian E1kv form with EUR conversion, gain/loss separation, and the 25% / 27.5% basket split required by §27a EStG.
+      - generic [ref=e56]:
+        - generic [ref=e57]:
+          - generic [ref=e58]: KZ 994 · Stock realized gains
+          - generic [ref=e60]: EUR 0.00
+        - generic [ref=e61]:
+          - generic [ref=e62]: KZ 857 · Derivative net
+          - generic [ref=e64]: EUR 0.00
+        - generic [ref=e65]:
+          - generic [ref=e66]: KZ 892 · Realized losses
+          - generic [ref=e68]: EUR 0.00
+        - generic [ref=e69]:
+          - generic [ref=e70]: KZ 863 · Foreign dividends
+          - generic [ref=e72]: EUR 0.00
+        - generic [ref=e73]:
+          - generic [ref=e74]: KZ 998 · Creditable WHT (27.5%)
+          - generic [ref=e76]: EUR 0.00
+        - generic [ref=e77]:
+          - generic [ref=e78]: KeSt Due
+          - generic [ref=e80]: EUR 0.00
+      - generic [ref=e81]:
+        - generic [ref=e82]: "27.5% basket: EUR 0.00"
+        - generic [ref=e83]: "25% basket: EUR 0.00"
+        - generic [ref=e84]: "Fees: excluded (§20 Abs. 2 EStG)"
+      - generic [ref=e85]:
+        - generic [ref=e86]:
+          - generic [ref=e87]: E1kv Field Mapping
+          - table [ref=e89]:
+            - rowgroup [ref=e90]:
+              - row "E1kv Field Meaning Amount EUR" [ref=e91]:
+                - columnheader "E1kv Field" [ref=e92]
+                - columnheader "Meaning" [ref=e93]
+                - columnheader "Amount EUR" [ref=e94]
+            - rowgroup [ref=e95]:
+              - row "994 Auslaend. Substanzgewinne Aktien/ETF/Anleihen (27,5%) 0" [ref=e96]:
+                - cell "994" [ref=e97]
+                - cell "Auslaend. Substanzgewinne Aktien/ETF/Anleihen (27,5%)" [ref=e98]
+                - cell "0" [ref=e99]
+              - row "892 Realisierte Verluste (27,5%) 0" [ref=e100]:
+                - cell "892" [ref=e101]
+                - cell "Realisierte Verluste (27,5%)" [ref=e102]
+                - cell "0" [ref=e103]
+              - row "857 Eink. aus nicht verbrieften Derivaten (27,5%) 0" [ref=e104]:
+                - cell "857" [ref=e105]
+                - cell "Eink. aus nicht verbrieften Derivaten (27,5%)" [ref=e106]
+                - cell "0" [ref=e107]
+              - row "863 Auslandsdividenden (27,5%) 0" [ref=e108]:
+                - cell "863" [ref=e109]
+                - cell "Auslandsdividenden (27,5%)" [ref=e110]
+                - cell "0" [ref=e111]
+              - row "409 Auslaend. Anleihezinsen / Forderungswertpapiere (27,5%) 0" [ref=e112]:
+                - cell "409" [ref=e113]
+                - cell "Auslaend. Anleihezinsen / Forderungswertpapiere (27,5%)" [ref=e114]
+                - cell "0" [ref=e115]
+              - row "861 Auslaend. Sparbuch-/Bankzinsen (25%) 0" [ref=e116]:
+                - cell "861" [ref=e117]
+                - cell "Auslaend. Sparbuch-/Bankzinsen (25%)" [ref=e118]
+                - cell "0" [ref=e119]
+              - row "998 Anrechenbare ausl. Quellensteuer (27,5%) 0" [ref=e120]:
+                - cell "998" [ref=e121]
+                - cell "Anrechenbare ausl. Quellensteuer (27,5%)" [ref=e122]
+                - cell "0" [ref=e123]
+              - row "901 Anrechenbare ausl. Quellensteuer (25%) 0" [ref=e124]:
+                - cell "901" [ref=e125]
+                - cell "Anrechenbare ausl. Quellensteuer (25%)" [ref=e126]
+                - cell "0" [ref=e127]
+        - generic [ref=e129]: Category P/L
+      - link "Download E1kv CSV" [ref=e134] [cursor=pointer]:
+        - /url: /api/export/e1kv?calcKey=parse_84c2665d8f601d0a208116be2dcb75fdIBKR%20Flex%20XMLN%23
+        - button "Download E1kv CSV" [ref=e135]
+      - separator [ref=e136]
+      - button "KeSt Calculation Breakdown — Tax Year 2026" [ref=e138] [cursor=pointer]:
+        - img [ref=e139]
+        - text: KeSt Calculation Breakdown — Tax Year 2026
+    - generic [ref=e141]: Austrian KeSt Engine — calculation aid only, not tax advice. Per §39 Abs 1 EStG all foreign-broker capital income above EUR 22 must be declared in your annual return (E1 + E1kv). Consult a qualified Austrian tax professional before filing.
