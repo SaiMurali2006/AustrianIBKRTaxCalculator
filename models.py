@@ -53,6 +53,8 @@ class ParsedData:
     cash_other: pd.DataFrame
     all_trades: pd.DataFrame
     all_cash: pd.DataFrame
+    corporate_actions: pd.DataFrame = field(default_factory=pd.DataFrame)
+    pil_payments: pd.DataFrame = field(default_factory=pd.DataFrame)
 
 
 @dataclass
@@ -77,6 +79,8 @@ class TaxResult:
     foreign_tax_credit_25: float = 0.0
     excluded_isins: list[str] = field(default_factory=list)
     tax_year: int | None = None
+    pil_payments: pd.DataFrame = field(default_factory=pd.DataFrame)
+    corporate_actions: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def taxable_base(self) -> float:

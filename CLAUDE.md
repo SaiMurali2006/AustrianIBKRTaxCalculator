@@ -35,7 +35,7 @@ The canonical boundary is `models.ParsedData`. Any broker parser must produce th
 |---|---|---|
 | `models.py` | `ParsedData`, `TaxResult`, column constants | stdlib, pandas |
 | `parsers/__init__.py` | `BROKER_REGISTRY`, `BROKER_SAMPLES`, `get_parser()` | `models`, `.ibkr_flex` |
-| `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML` | `models`, stdlib, pandas |
+| `parsers/ibkr_flex.py` | IBKR Flex XML → `ParsedData`; owns `SAMPLE_XML`; reads `Trade`, `CashTransaction`, `CorporateAction` nodes; splits PIL into its own bucket | `models`, stdlib, pandas |
 | `tax_engine.py` | `ParsedData` → `TaxResult`; broker-agnostic | `models`, `currency_provider` |
 | `currency_provider.py` | EUR conversion, ECB cache | stdlib only |
 | `app.py` | Streamlit UI; two-step session cache (parse + calc); three-view nav; Altair charts; Altbestand selector | `parsers`, `tax_engine`, `styles`, `currency_provider`, `altair`, `hashlib` |
@@ -124,8 +124,8 @@ E1kv Kennzahl mapping — verified against the official **BMF E1kv 2024** form (
 | Kennzahl | Category | Basket | Note |
 |---|---|---|---|
 | `"994"` | Foreign stock / ETF / bond realized gains (*ausländische Substanzgewinne*) | 27.5% | Moving-average realization (§27 Abs. 3 EStG). Domestic equivalent is KZ 981 — not used for foreign-broker accounts. |
-| `"892"` | Realized losses on securities and non-securitised derivatives | 27.5% | Reported separately so the Finanzamt can verify Verlustausgleich |
-| `"857"` | Non-securitised derivative gains — options, futures, FOPs (*Einkünfte aus nicht verbrieften Derivaten*) | 27.5% | Securitised derivatives (warrants, certificates — assetCategory WAR/IOPT) belong in KZ 995/896 and are routed to the manual queue. |
+| `"892"` | Foreign stock/ETF/bond realized losses (*ausländische Substanzverluste*, §27 Abs 3) | 27.5% | Stocks/ETFs/bonds only. Derivative losses do NOT land here. |
+| `"857"` | Non-securitised derivatives — gains AND losses NET signed (§27 Abs 4) | 27.5% | Securitised derivatives (warrants, certificates — assetCategory WAR/IOPT) belong in KZ 995/896 and are routed to the manual queue. KZ 857 is reported as the signed net (e.g. 1000 gain + 300 loss = 700; or net loss = negative figure). |
 | `"863"` | Foreign dividends (*Auslandsdividenden*) | 27.5% | Gross income only — bond coupon interest goes to KZ 409, not here. |
 | `"409"` | Foreign bond coupon interest (*Forderungswertpapiere*) | 27.5% | Separate from dividends. Same WHT credit pool (KZ 998). |
 | `"861"` | Foreign bank deposit interest | **25%** | Cannot be offset against securities losses |
@@ -165,7 +165,13 @@ creditable_wht_27  = min(abs(dividend_wht), cap_div) + min(abs(bond_wht), cap_bo
 
 Securities acquired before **1 January 2011** (derivatives and interest-bearing instruments: **31 March 2012**) are tax-free on capital gains for private investors. IBKR statements do not carry the original acquisition date for transferred positions, so detection is impossible from XML alone.
 
-The UI exposes a `Pre-2011 Altbestand (exempt)` multiselect in the sidebar listing every `(symbol, ISIN)` in the parsed statement. Selected ISINs are passed as `excluded_isins` into `TaxAggregator.run(parsed, excluded_isins=...)`. Excluded trades contribute zero to KZ 994/892 and are tagged `"PRE-2011 EXEMPT"` in the audit trail (with `realized_pnl_eur = 0`), but cost-basis tracking continues so subsequent post-2011 sells of the same symbol still calculate against the running average cost.
+The UI exposes a `Pre-2011 Altbestand (exempt)` multiselect, plus a per-ISIN `st.number_input` for the Altbestand quantity. The selection and quantities are passed as `TaxAggregator.run(parsed, excluded_isins=..., altbestand_quantities={isin: qty})`.
+
+Per-pool model inside `CapitalGainsProcessor`:
+- Each symbol holds two pools: `alt_qty` (frozen, tax-exempt forever) and `qty`/`avg_cost` (taxable Neubestand, moving average).
+- A BUY always adds to Neubestand. A SELL depletes the Altbestand pool first; only the excess hits Neubestand and is reported on KZ 994/892.
+- Altbestand-depleted rows keep `e1kv_field = "PRE-2011 EXEMPT"` and `realized_pnl_eur = 0`; an `altbestand_qty_used` audit column shows how many units came out of the exempt pool.
+- If the user marks an ISIN without a quantity, the pool is treated as effectively infinite — legacy "exclude all units" behaviour.
 
 ### Fee Deductibility (`include_fees` toggle)
 
@@ -383,3 +389,8 @@ python smoke_test.py
 - Do not auto-file securitised derivatives (WAR, IOPT) as KZ 857. They belong in KZ 995/896 (out of scope) — route them to the manual review queue (`ParsedData.funds`).
 - Do not run the engine over a multi-year statement. §27a EStG forbids cross-year offsets for private investors. Use `years_in_parsed()` and reject when more than one year is present, instructing the user to export one Flex Query per year.
 - Do not pool the foreign WHT cap across dividends and bond interest. The 15% DBA cap is applied per income type; pooling allows illegal cross-subsidy.
+- Do not credit foreign bank-interest WHT at 100%. Apply the same 15% DBA ceiling — most treaties cap interest at 0–10%, so 15% is the conservative outer bound. Excess goes to `TaxResult.excess_wht`.
+- Do not route derivative losses into KZ 892. KZ 892 is **Substanzverluste only** (§27 Abs 3 stocks/ETFs/bonds). Derivative gains AND losses go into KZ 857 as a signed net (§27 Abs 4).
+- Do not file Payment in Lieu rows as Auslandsdividenden. PIL is a securities-lending Surrogat (EStR Rz 6228), not §27 Abs 2 dividend — route it to `ParsedData.pil_payments` for manual review, never into KZ 863.
+- Do not silently drop `CorporateAction` nodes. Surface splits, spin-offs, mergers, name changes via `ParsedData.corporate_actions` → `TaxResult.corporate_actions`. The engine does NOT auto-adjust cost basis.
+- Do not exempt all units of a marked Altbestand ISIN when the user supplies a quantity. Only the entered quantity is exempt; SELLs above that quantity hit the taxable Neubestand pool.

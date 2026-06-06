@@ -32,17 +32,28 @@ DBA_DIVIDEND_CAP = 0.15
 
 
 class CapitalGainsProcessor:
-    """Moving-average stock processor following Austrian average cost logic."""
+    """Moving-average stock processor following Austrian average cost logic.
+
+    Altbestand handling (§124b Z 185 EStG): a marked ISIN can carry a frozen tax-exempt
+    pool. SELLs deplete the Altbestand pool first (FIFO); the remaining quantity hits
+    the taxable Neubestand pool which carries the moving-average cost basis.
+    """
 
     def __init__(
         self,
         fx_provider: ECBRateProvider,
         include_fees: bool = False,
         excluded_isins: set[str] | None = None,
+        altbestand_quantities: dict[str, float] | None = None,
     ) -> None:
         self.fx_provider = fx_provider
         self.include_fees = include_fees
         self.excluded_isins = {i.strip() for i in (excluded_isins or set()) if i}
+        self.altbestand_quantities = {
+            (k or "").strip(): max(0.0, float(v))
+            for k, v in (altbestand_quantities or {}).items()
+            if (k or "").strip()
+        }
         self.positions: dict[str, dict[str, float]] = {}
 
     def process(self, trades: pd.DataFrame) -> tuple[float, float, pd.DataFrame]:
@@ -64,35 +75,50 @@ class CapitalGainsProcessor:
             commission_eur = commission * fx_amount
             symbol = str(trade["symbol"])
             isin = str(trade.get("isin", "") or "")
-            position = self.positions.setdefault(symbol, {"qty": 0.0, "avg_cost": 0.0})
+            if symbol not in self.positions:
+                if isin in self.excluded_isins:
+                    # Marked without a quantity → treat the whole symbol as Altbestand
+                    # (legacy behaviour). Marked WITH a quantity → only that quantity is exempt.
+                    alt_init = self.altbestand_quantities.get(isin, float("inf"))
+                else:
+                    alt_init = 0.0
+                self.positions[symbol] = {"qty": 0.0, "avg_cost": 0.0, "alt_qty": alt_init}
+            position = self.positions[symbol]
             action = _trade_action(trade, signed_qty)
             realized = 0.0
+            altbestand_qty_used = 0.0
             old_qty = position["qty"]
             old_avg = position["avg_cost"]
-            is_altbestand = isin in self.excluded_isins
+            old_alt = position["alt_qty"]
+            is_marked = isin in self.excluded_isins
 
             if action == "BUY":
+                # Post-2011 BUYs always feed the Neubestand pool — they are NOT Altbestand.
                 old_total_cost = old_qty * old_avg
                 fee_buy = commission_eur if self.include_fees else 0.0
                 new_total_cost = old_total_cost + (qty * price_eur) + fee_buy
                 position["qty"] = old_qty + qty
                 position["avg_cost"] = new_total_cost / position["qty"] if position["qty"] else 0.0
             else:
-                fee_sell = commission_eur if self.include_fees else 0.0
-                sale_proceeds = (qty * price_eur) - fee_sell
-                cost_basis = qty * old_avg
-                realized = sale_proceeds - cost_basis
-                if not is_altbestand:
+                # SELL: deplete Altbestand pool first, then the taxable Neubestand pool.
+                altbestand_qty_used = min(qty, old_alt) if is_marked else 0.0
+                taxable_qty = qty - altbestand_qty_used
+                position["alt_qty"] = max(0.0, old_alt - altbestand_qty_used)
+                if taxable_qty > 0:
+                    fee_sell = commission_eur if self.include_fees else 0.0
+                    sale_proceeds = (taxable_qty * price_eur) - fee_sell
+                    cost_basis = taxable_qty * old_avg
+                    realized = sale_proceeds - cost_basis
                     if realized > 0:
                         gain_total += realized
                     elif realized < 0:
                         loss_total += realized
-                position["qty"] = old_qty - qty
-                if position["qty"] <= 0.0000001:
-                    position["qty"] = 0.0
-                    position["avg_cost"] = 0.0
+                    position["qty"] = old_qty - taxable_qty
+                    if position["qty"] <= 0.0000001:
+                        position["qty"] = 0.0
+                        position["avg_cost"] = 0.0
 
-            if is_altbestand:
+            if altbestand_qty_used > 0 and realized == 0:
                 field = "PRE-2011 EXEMPT"
             elif realized > 0:
                 field = "994"
@@ -119,7 +145,8 @@ class CapitalGainsProcessor:
                     "old_avg_cost_eur": old_avg,
                     "new_quantity": position["qty"],
                     "new_avg_cost_eur": position["avg_cost"],
-                    "realized_pnl_eur": 0.0 if is_altbestand else realized,
+                    "realized_pnl_eur": realized,
+                    "altbestand_qty_used": altbestand_qty_used,
                     "e1kv_field": field,
                 }
             )
@@ -128,11 +155,13 @@ class CapitalGainsProcessor:
 
 
 class DerivativeProcessor:
-    """Realized P&L processor for IBKR option and derivative trades.
+    """Realized P&L processor for non-securitised derivatives (options, futures, FOP).
 
-    IBKR Flex does not distinguish securitised (warrants, certificates) from non-securitised
-    (options, futures) derivatives. We default to non-securitised treatment: gains → KZ 981,
-    losses → KZ 892. Securitised derivatives map to KZ 995/896 — currently out of scope.
+    Per §27 Abs 4 EStG and KZ 857 of the BMF E1kv 2024 form: gains AND losses on
+    non-securitised derivatives without freiwilliger KESt-Abzug go in KZ 857 saldiert
+    (net), NOT split between 857 and 892. KZ 892 is reserved for §27 Abs 3 Substanz
+    losses from stocks/ETFs/bonds. Securitised derivatives (WAR, IOPT) belong in
+    KZ 995/896 and are routed to the manual queue by the parser.
     """
 
     def __init__(self, fx_provider: ECBRateProvider, include_fees: bool = False) -> None:
@@ -166,7 +195,7 @@ class DerivativeProcessor:
                 field = "857"
             elif pnl_eur < 0:
                 loss_total += pnl_eur
-                field = "892"
+                field = "857"
             else:
                 field = ""
             rows.append(
@@ -199,11 +228,16 @@ class TaxAggregator:
         self.fx_provider = fx_provider or ECBRateProvider()
         self.include_fees = include_fees
 
-    def run(self, parsed: ParsedData, excluded_isins: set[str] | None = None) -> TaxResult:
+    def run(
+        self,
+        parsed: ParsedData,
+        excluded_isins: set[str] | None = None,
+        altbestand_quantities: dict[str, float] | None = None,
+    ) -> TaxResult:
         excluded = {i.strip() for i in (excluded_isins or set()) if i}
 
         stock_gain, stock_loss, stock_audit = CapitalGainsProcessor(
-            self.fx_provider, self.include_fees, excluded
+            self.fx_provider, self.include_fees, excluded, altbestand_quantities,
         ).process(parsed.stocks)
         deriv_gain, deriv_loss, option_audit = DerivativeProcessor(
             self.fx_provider, self.include_fees
@@ -233,7 +267,11 @@ class TaxAggregator:
         raw_wht_27 = abs(dividend_wht) + abs(bond_wht)
         excess_wht_above_cap = raw_wht_27 - creditable_wht_27
 
-        creditable_wht_25 = abs(bank_wht)
+        # Bank-interest WHT also subject to DBA cap (§46 EStG + treaty). Most DBAs cap
+        # interest at 0–10%; 15% is a conservative ceiling. Excess flows to excess_wht.
+        cap_bank = max(0.0, bank_interest_total) * DBA_DIVIDEND_CAP
+        creditable_wht_25 = min(abs(bank_wht), cap_bank)
+        excess_wht_above_cap += abs(bank_wht) - creditable_wht_25
 
         basket_27 = stock_gain + stock_loss + deriv_gain + deriv_loss + dividend_total + bond_interest_total
         basket_25 = bank_interest_total
@@ -271,10 +309,13 @@ class TaxAggregator:
         years = pd.to_numeric(date_strs.str[:4], errors="coerce").dropna()
         tax_year = int(years.max()) if not years.empty else None
 
+        # KZ 857 carries the SIGNED NET of non-securitised derivative gains and losses
+        # (§27 Abs 4 EStG). KZ 892 carries ONLY foreign stock/ETF/bond Substanzverluste
+        # (§27 Abs 3) — derivative losses do not land here.
         fields = {
             "994": round(stock_gain, 2),
-            "892": round(abs(stock_loss + deriv_loss), 2),
-            "857": round(deriv_gain, 2),
+            "892": round(abs(stock_loss), 2),
+            "857": round(deriv_gain + deriv_loss, 2),
             "863": round(dividend_total, 2),
             "409": round(bond_interest_total, 2),
             "861": round(bank_interest_total, 2),
@@ -293,6 +334,8 @@ class TaxAggregator:
             },
             audit=audit,
             manual_processing=parsed.funds.copy(),
+            pil_payments=getattr(parsed, "pil_payments", pd.DataFrame()).copy(),
+            corporate_actions=getattr(parsed, "corporate_actions", pd.DataFrame()).copy(),
             tax_due=tax_due,
             foreign_tax_credit=foreign_tax_credit,
             taxable_27=round(taxable_27, 2),

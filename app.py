@@ -115,22 +115,28 @@ def main() -> None:
         return
 
     with st.sidebar:
-        excluded_isins = _altbestand_selector(parsed)
+        excluded_isins, altbestand_quantities = _altbestand_selector(parsed)
         export_clicked = st.button(
             "Generate CSV Exports",
             help="Saves E1kv_Report_<year>.csv, transaction_audit.csv, and manual_processing_required.csv to the current directory.",
         )
 
+    qty_signature = "|".join(f"{k}={altbestand_quantities[k]}" for k in sorted(altbestand_quantities))
     calc_key = (
         parse_key
         + ("F" if include_fees else "N")
         + "|".join(sorted(excluded_isins))
+        + "#" + qty_signature
     )
     if calc_key not in st.session_state:
         with st.spinner("Calculating KeSt…"):
             st.session_state[calc_key] = TaxAggregator(
                 ECBRateProvider(), include_fees=include_fees
-            ).run(parsed, excluded_isins=excluded_isins)
+            ).run(
+                parsed,
+                excluded_isins=excluded_isins,
+                altbestand_quantities=altbestand_quantities,
+            )
     result = st.session_state[calc_key]
 
     if export_clicked:
@@ -145,15 +151,17 @@ def main() -> None:
         render_audit(result)
 
 
-def _altbestand_selector(parsed) -> set[str]:
+def _altbestand_selector(parsed) -> tuple[set[str], dict[str, float]]:
     """Pre-2011 Altbestand exclusion — §124b Z 185 EStG.
 
-    Lets the user mark specific (symbol, ISIN) combinations as grandfathered. The engine
-    will skip realized P/L for those ISINs entirely. IBKR Flex statements do not carry
-    acquisition dates for transferred positions, so this must be a manual selection.
+    Per-lot fix (§124b Z 185): the user marks an ISIN as having an Altbestand pool AND
+    enters the Altbestand quantity. SELLs deplete the Altbestand pool first (tax-exempt);
+    only the quantity in excess flows into the taxable Neubestand calculation. Post-2011
+    BUYs always feed Neubestand, never the exempt pool. If the user leaves the quantity
+    at zero or blank, the whole symbol is treated as Altbestand (legacy behaviour).
     """
     if parsed.stocks.empty:
-        return set()
+        return set(), {}
 
     pairs = (
         parsed.stocks[["symbol", "isin"]]
@@ -164,7 +172,7 @@ def _altbestand_selector(parsed) -> set[str]:
     options_map = {f"{p['symbol']} — {p['isin'] or '(no ISIN)'}": str(p["isin"] or "") for p in pairs}
     options_map = {label: isin for label, isin in options_map.items() if isin}
     if not options_map:
-        return set()
+        return set(), {}
     selected = st.multiselect(
         "Pre-2011 Altbestand (exempt)",
         options=list(options_map.keys()),
@@ -173,11 +181,30 @@ def _altbestand_selector(parsed) -> set[str]:
             "Securities acquired before 1 January 2011 (derivatives / interest-bearing "
             "instruments: 31 March 2012) are tax-free under § 124b Z 185 EStG. "
             "IBKR statements do not include the original acquisition date for transferred "
-            "positions — pick the symbols you know are Altbestand. Their realized P/L is "
-            "excluded from KeSt and tagged 'PRE-2011 EXEMPT' in the audit trail."
+            "positions — pick the symbols you know are Altbestand. SELLs deplete the "
+            "Altbestand pool first; any excess hits the taxable Neubestand pool."
         ),
     )
-    return {options_map[label] for label in selected}
+    excluded = {options_map[label] for label in selected}
+    quantities: dict[str, float] = {}
+    if selected:
+        st.caption("Altbestand quantity per ISIN (leave 0 to treat all units as exempt):")
+        for label in selected:
+            isin = options_map[label]
+            qty = st.number_input(
+                label,
+                min_value=0.0,
+                value=0.0,
+                step=1.0,
+                key=f"altqty_{isin}",
+                help=(
+                    "Enter the quantity of this ISIN that was acquired before "
+                    "1 January 2011. Post-2011 buys are always Neubestand (taxable)."
+                ),
+            )
+            if qty > 0:
+                quantities[isin] = float(qty)
+    return excluded, quantities
 
 
 def render_summary(result, parsed, include_fees: bool = False) -> None:
@@ -239,6 +266,14 @@ def render_summary(result, parsed, include_fees: bool = False) -> None:
             f"or the Austrian tax actually owed. Austria cannot credit this excess (§46 EStG) — "
             f"reclaim it from the source country (e.g. file IRS Form 1040-NR for US withholding above 15%).",
             icon="⚠",
+        )
+
+    if result.bond_interest_total != 0 or result.bank_interest_total != 0:
+        st.info(
+            "Bond and bank interest WHT is capped at 15% per income type. Most DBA treaties "
+            "(US, DE, most EU) actually cap interest WHT at 0–10% — verify the treaty for the "
+            "issuer/bank country and reclaim any over-withheld amount from the source country.",
+            icon="ℹ️",
         )
 
     if result.excluded_isins:
@@ -584,13 +619,34 @@ def render_audit(result) -> None:
             "text/csv",
         )
 
+    st.subheader("Payment in Lieu (PIL) Queue")
+    st.caption(
+        "Securities-lending substitute payments (EStR Rz 6228 / §27 Abs 5 Z 4) — NOT §27 Abs 2 dividends. "
+        "Excluded from KZ 863. Report at the progressive income tax rate per your tax advisor."
+    )
+    if result.pil_payments.empty:
+        st.success("No PIL rows detected.")
+    else:
+        st.dataframe(result.pil_payments, use_container_width=True, hide_index=True)
+
+    st.subheader("Corporate Actions Queue")
+    st.caption(
+        "Splits, spin-offs, mergers, name changes parsed from the broker statement. Cost-basis "
+        "adjustments require manual handling — the tax engine does NOT auto-process them."
+    )
+    if result.corporate_actions.empty:
+        st.success("No corporate actions detected.")
+    else:
+        st.dataframe(result.corporate_actions, use_container_width=True, hide_index=True)
+
     _footer()
 
 
 def _footer() -> None:
     st.markdown(
         '<div class="kest-footer">Austrian KeSt Engine — calculation aid only, not tax advice. '
-        "Consult a qualified Austrian tax professional before filing.</div>",
+        "Per §39 Abs 1 EStG all foreign-broker capital income above EUR 22 must be declared in your "
+        "annual return (E1 + E1kv). Consult a qualified Austrian tax professional before filing.</div>",
         unsafe_allow_html=True,
     )
 

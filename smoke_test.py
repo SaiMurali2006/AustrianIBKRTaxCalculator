@@ -135,8 +135,9 @@ def test_bond_interest_routed_to_kz_409_not_863():
     assert abs(result.e1kv_fields["863"] - 50.0) < 0.01, f"Dividend → KZ 863=50, got {result.e1kv_fields['863']}"
 
 
-def test_derivative_loss_lands_in_kz_892_not_857():
-    """An option close at a loss → KZ 892, not KZ 857."""
+def test_derivative_loss_lands_in_kz_857_net_signed():
+    """Per §27 Abs 4 + KZ 857: derivative gains AND losses net signed into KZ 857.
+    KZ 892 is reserved for §27 Abs 3 Substanzverluste from stocks/ETFs/bonds."""
     synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
         <Trades>
             <Trade currency="EUR" fxRateToBase="1" assetCategory="OPT" symbol="SPY 20260620 P 450"
@@ -147,8 +148,152 @@ def test_derivative_loss_lands_in_kz_892_not_857():
     </FlexStatement></FlexStatements></FlexQueryResponse>"""
     parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
     result = TaxAggregator().run(parsed)
-    assert result.e1kv_fields["857"] == 0.0, f"No gains, KZ 857 must be 0, got {result.e1kv_fields['857']}"
-    assert result.e1kv_fields["892"] >= 299.0, f"Option loss must surface in KZ 892, got {result.e1kv_fields['892']}"
+    assert result.e1kv_fields["857"] <= -299.0, (
+        f"Derivative loss must land in KZ 857 (signed net), got {result.e1kv_fields['857']}"
+    )
+    assert result.e1kv_fields["892"] == 0.0, (
+        f"KZ 892 reserved for stock losses only — must be 0 when only derivative loss exists, "
+        f"got {result.e1kv_fields['892']}"
+    )
+
+
+def test_derivative_gains_and_losses_net_in_kz_857():
+    """1000 EUR option gain + 300 EUR option loss → KZ 857 = 700 (signed net)."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="OPT" symbol="OPT_WIN"
+                description="OPT WIN" isin="" dateTime="20260601;100000" quantity="-1" tradePrice="10"
+                proceeds="-1000" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="1000" buySell="BUY"/>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="OPT" symbol="OPT_LOSS"
+                description="OPT LOSS" isin="" dateTime="20260602;100000" quantity="-1" tradePrice="3"
+                proceeds="-300" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="-300" buySell="BUY"/>
+        </Trades>
+        <CashTransactions/>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert abs(result.e1kv_fields["857"] - 700.0) < 0.01, (
+        f"KZ 857 must report signed net 700, got {result.e1kv_fields['857']}"
+    )
+    assert result.e1kv_fields["892"] == 0.0, (
+        f"KZ 892 must stay 0 (no stock loss), got {result.e1kv_fields['892']}"
+    )
+
+
+def test_short_option_expired_worthless():
+    """Short call expired worthless → +premium realized, KZ 857."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="OPT" symbol="SPY 20260620 C 500"
+                description="SPY CALL EXPIRED" isin="" dateTime="20260620;100000" quantity="1" tradePrice="0"
+                proceeds="0" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="150" buySell="BUY"/>
+        </Trades>
+        <CashTransactions/>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert abs(result.e1kv_fields["857"] - 150.0) < 0.01, (
+        f"Expired-worthless short call premium must be KZ 857 = 150, got {result.e1kv_fields['857']}"
+    )
+
+
+def test_long_option_expired_worthless():
+    """Long call expired worthless → −premium realized, KZ 857."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="OPT" symbol="SPY 20260620 C 500"
+                description="SPY CALL EXPIRED LONG" isin="" dateTime="20260620;100000" quantity="-1" tradePrice="0"
+                proceeds="0" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="-150" buySell="SELL"/>
+        </Trades>
+        <CashTransactions/>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert abs(result.e1kv_fields["857"] + 150.0) < 0.01, (
+        f"Expired-worthless long call premium must be KZ 857 = −150, got {result.e1kv_fields['857']}"
+    )
+
+
+def test_bank_interest_wht_capped_at_dba_15_percent():
+    """30 EUR bank WHT on 100 EUR bank interest must be capped at 15."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades/>
+        <CashTransactions>
+            <CashTransaction currency="EUR" fxRateToBase="1" symbol="" description="Credit interest"
+                isin="" dateTime="20260430" amount="100" type="Broker Interest Received"/>
+            <CashTransaction currency="EUR" fxRateToBase="1" symbol="" description="WHT on bank interest"
+                isin="" dateTime="20260430" amount="-30" type="Withholding Tax"/>
+        </CashTransactions>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert result.e1kv_fields["901"] <= 15.01, (
+        f"Bank WHT must be capped at 15% of gross, got {result.e1kv_fields['901']}"
+    )
+    assert result.excess_wht >= 15.0 - 0.01, (
+        f"Excess bank WHT must surface, got {result.excess_wht}"
+    )
+
+
+def test_pil_excluded_from_dividends():
+    """Payment in Lieu rows must NOT populate KZ 863 — they go to the manual queue."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades/>
+        <CashTransactions>
+            <CashTransaction currency="EUR" fxRateToBase="1" symbol="XYZ" description="Payment in Lieu of Dividend"
+                isin="US0000000000" dateTime="20260101" amount="40" type="Payment In Lieu Of Dividends"/>
+            <CashTransaction currency="EUR" fxRateToBase="1" symbol="ABC" description="Cash Dividend"
+                isin="US1111111111" dateTime="20260101" amount="60" type="Dividends"/>
+        </CashTransactions>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert abs(result.e1kv_fields["863"] - 60.0) < 0.01, (
+        f"PIL must be excluded from KZ 863. Expected 60 (dividend only), got {result.e1kv_fields['863']}"
+    )
+    assert not result.pil_payments.empty, "PIL row must be present in pil_payments queue"
+
+
+def test_altbestand_quantity_pool_split():
+    """If Altbestand qty = 5 and user sells 8 of 10, first 5 are exempt, last 3 are taxable."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="OLD"
+                description="OLD STK" isin="AT0000000010" dateTime="20260101;100000" quantity="10" tradePrice="100"
+                proceeds="-1000" ibCommission="0" openCloseIndicator="O" cost="1000" fifoPnlRealized="0" buySell="BUY"/>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="OLD"
+                description="OLD STK" isin="AT0000000010" dateTime="20260601;100000" quantity="-8" tradePrice="200"
+                proceeds="1600" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="0" buySell="SELL"/>
+        </Trades>
+        <CashTransactions/>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(
+        parsed,
+        excluded_isins={"AT0000000010"},
+        altbestand_quantities={"AT0000000010": 5.0},
+    )
+    # Sells 8 units @ 200; first 5 exempt; remaining 3 taxable at (200 − 100) × 3 = 300.
+    assert abs(result.e1kv_fields["994"] - 300.0) < 0.01, (
+        f"Only 3 taxable units × 100 gain = 300 expected on KZ 994, got {result.e1kv_fields['994']}"
+    )
+
+
+def test_corporate_actions_surfaced():
+    """CorporateAction nodes must land in TaxResult.corporate_actions, not in trades."""
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades/>
+        <CashTransactions/>
+        <CorporateActions>
+            <CorporateAction type="SP" symbol="AAPL" isin="US0378331005"
+                description="4:1 forward split" dateTime="20260801" quantity="300"
+                proceeds="0" currency="USD"/>
+        </CorporateActions>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result = TaxAggregator().run(parsed)
+    assert not result.corporate_actions.empty, "CorporateAction row must surface in result"
+    assert "AAPL" in set(result.corporate_actions["symbol"]), "AAPL split must be present"
 
 
 def test_wht_reversal_subtracts_from_credit():
@@ -269,7 +414,14 @@ if __name__ == "__main__":
     test_bank_interest_taxed_at_25_not_275()
     test_securities_losses_do_not_offset_bank_interest()
     test_bond_interest_routed_to_kz_409_not_863()
-    test_derivative_loss_lands_in_kz_892_not_857()
+    test_derivative_loss_lands_in_kz_857_net_signed()
+    test_derivative_gains_and_losses_net_in_kz_857()
+    test_short_option_expired_worthless()
+    test_long_option_expired_worthless()
+    test_bank_interest_wht_capped_at_dba_15_percent()
+    test_pil_excluded_from_dividends()
+    test_altbestand_quantity_pool_split()
+    test_corporate_actions_surfaced()
     test_wht_reversal_subtracts_from_credit()
     test_warrant_routed_to_manual_queue()
     test_bank_vs_bond_interest_split_by_type()

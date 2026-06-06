@@ -25,13 +25,28 @@ SAMPLE_XML = """<FlexQueryResponse>
 </FlexQueryResponse>"""
 
 
+CORPORATE_ACTION_COLUMNS = [
+    "date",
+    "datetime",
+    "type",
+    "symbol",
+    "isin",
+    "description",
+    "quantity",
+    "proceeds",
+    "currency",
+]
+
+
 def parse(source: str | Path | bytes) -> ParsedData:
     root = _load_xml(source)
     trades = [_normalise_trade(node.attrib) for node in root.findall(".//Trade")]
     cash = [_normalise_cash(node.attrib) for node in root.findall(".//CashTransaction")]
+    corp_actions = [_normalise_corp_action(node.attrib) for node in root.findall(".//CorporateAction")]
 
     trades_df = pd.DataFrame(trades, columns=TRADE_COLUMNS)
     cash_df = pd.DataFrame(cash, columns=CASH_COLUMNS)
+    corp_actions_df = pd.DataFrame(corp_actions, columns=CORPORATE_ACTION_COLUMNS)
 
     if not trades_df.empty:
         trades_df["assetCategory"] = trades_df["assetCategory"].str.upper()
@@ -62,7 +77,19 @@ def parse(source: str | Path | bytes) -> ParsedData:
     _unknown_rows = trades_df[~trades_df["assetCategory"].isin(_known)].copy() if not trades_df.empty else _empty(TRADE_COLUMNS)
     funds = pd.concat([_fund_rows, _securitised_deriv, _unknown_rows], ignore_index=True)
 
-    dividends = _cash_filter(cash_df, ["dividend", "payment in lieu", "withholding"])
+    # PIL (Payment in Lieu) is a securities-lending substitute, NOT a §27 Abs 2 dividend.
+    # Per EStR Rz 6228 it is a Surrogat — must NOT land in KZ 863 (Auslandsdividenden).
+    # Route PIL rows to a separate manual-review bucket; the user reports them at the
+    # progressive rate (or as the tax advisor instructs), not via the KESt 27.5% pipeline.
+    pil_payments = _cash_filter_pil(cash_df)
+    pil_index = pil_payments.index if not pil_payments.empty else pd.Index([])
+    # True dividend rows: dividend / withholding keywords minus the PIL rows.
+    dividends_raw = _cash_filter(cash_df, ["dividend", "withholding"])
+    dividends = (
+        dividends_raw.drop(index=pil_index, errors="ignore").copy()
+        if not dividends_raw.empty
+        else _empty(CASH_COLUMNS)
+    )
     # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 409).
     # Prefer the IBKR `type` attribute — it is authoritative. Fall back to description match
     # for older Flex exports that left `type` blank.
@@ -87,7 +114,13 @@ def parse(source: str | Path | bytes) -> ParsedData:
         else _empty(CASH_COLUMNS)
     )
     bond_interest = pd.concat([bond_interest, leftover_interest], ignore_index=False)
-    consumed = dividends.index.union(interest_all.index).union(bank_interest.index).union(bond_interest.index)
+    consumed = (
+        dividends.index
+        .union(interest_all.index)
+        .union(bank_interest.index)
+        .union(bond_interest.index)
+        .union(pil_index)
+    )
     cash_other = (
         cash_df.drop(index=consumed, errors="ignore").copy()
         if not cash_df.empty
@@ -104,6 +137,8 @@ def parse(source: str | Path | bytes) -> ParsedData:
         cash_other=cash_other.reset_index(drop=True),
         all_trades=trades_df.reset_index(drop=True),
         all_cash=cash_df.reset_index(drop=True),
+        corporate_actions=corp_actions_df.reset_index(drop=True),
+        pil_payments=pil_payments.reset_index(drop=True),
     )
 
 
@@ -136,6 +171,31 @@ def _normalise_trade(attrs: dict[str, str]) -> dict[str, object]:
         "fifoPnlRealized": _num(attrs.get("fifoPnlRealized")),
         "buySell": attrs.get("buySell", "").upper(),
     }
+
+
+def _normalise_corp_action(attrs: dict[str, str]) -> dict[str, object]:
+    date_time = attrs.get("dateTime", attrs.get("reportDate", ""))
+    return {
+        "date": date_time.split(";")[0],
+        "datetime": date_time,
+        "type": attrs.get("type", ""),
+        "symbol": attrs.get("symbol", ""),
+        "isin": attrs.get("isin", ""),
+        "description": attrs.get("description", attrs.get("actionDescription", "")),
+        "quantity": _num(attrs.get("quantity")),
+        "proceeds": _num(attrs.get("proceeds")),
+        "currency": attrs.get("currency", "EUR"),
+    }
+
+
+def _cash_filter_pil(df: pd.DataFrame) -> pd.DataFrame:
+    """Payment in Lieu of dividend — securities-lending substitute. Not §27 Abs 2 dividend."""
+    if df.empty:
+        return _empty(CASH_COLUMNS)
+    type_lower = df["type"].fillna("").str.strip().str.lower()
+    desc_lower = df["description"].fillna("").str.lower()
+    haystack = type_lower + " " + desc_lower
+    return df[haystack.str.contains("payment in lieu|pil ", regex=True, na=False)].copy()
 
 
 def _normalise_cash(attrs: dict[str, str]) -> dict[str, object]:
