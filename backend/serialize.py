@@ -173,6 +173,8 @@ def result_to_json(result: TaxResult) -> dict[str, Any]:
         "pil_columns": df_columns(result.pil_payments),
         "corporate_actions": df_to_records(result.corporate_actions),
         "corporate_columns": df_columns(result.corporate_actions),
+        "tax_timeline": df_to_records(result.tax_timeline),
+        "tax_timeline_columns": df_columns(result.tax_timeline),
         "tax_due": float(result.tax_due),
         "foreign_tax_credit": float(result.foreign_tax_credit),
         "taxable_27": float(result.taxable_27),

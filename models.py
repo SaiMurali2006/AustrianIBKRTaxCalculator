@@ -81,6 +81,7 @@ class TaxResult:
     tax_year: int | None = None
     pil_payments: pd.DataFrame = field(default_factory=pd.DataFrame)
     corporate_actions: pd.DataFrame = field(default_factory=pd.DataFrame)
+    tax_timeline: pd.DataFrame = field(default_factory=pd.DataFrame)
 
     @property
     def taxable_base(self) -> float:

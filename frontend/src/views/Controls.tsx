@@ -44,7 +44,7 @@ export function Controls({
   };
 
   return (
-    <Card className="stack">
+    <Card className={`stack ${busy ? "card--loading" : ""}`}>
       <div className="row-between">
         <span className="eyebrow">Statement input</span>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -72,6 +72,11 @@ export function Controls({
             type="file"
             accept=".xml"
             style={{ display: "none" }}
+            // Reset the value on every open so re-selecting the SAME file still fires onChange
+            // (after a Clear the element keeps its old filename → no change event otherwise).
+            onClick={(e) => {
+              (e.currentTarget as HTMLInputElement).value = "";
+            }}
             onChange={(e) => {
               const f = e.target.files?.[0] ?? null;
               set({ file: f, fileName: f?.name ?? "", useSample: false });

@@ -154,7 +154,30 @@
   transition: transform 0.3s var(--ease-bounce), box-shadow 0.3s, border-color 0.18s;
   animation: apex-rise 0.44s var(--ease-bounce) both;
 }
-.card--hover:hover { transform: translateY(-3px); box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3); }
+.card:hover {
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--line-soft));
+  box-shadow: 0 0 20px color-mix(in srgb, var(--accent) 22%, transparent);
+}
+.card--hover:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft));
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.3),
+    0 0 22px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+@property --apex-ang { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+.card--loading { position: relative; }
+.card--loading::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1.4px;
+  pointer-events: none;
+  background: conic-gradient(from var(--apex-ang),
+    transparent 0deg, transparent 250deg,
+    color-mix(in srgb, var(--accent) 45%, transparent) 300deg,
+    var(--accent) 340deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  animation: apex-border-spin 2.4s linear infinite;
+}
+@keyframes apex-border-spin { to { --apex-ang: 360deg; } }
 .statcard__label {
   text-transform: uppercase; letter-spacing: 0.07em;
   font-size: 0.75rem; font-weight: 800; color: var(--muted);

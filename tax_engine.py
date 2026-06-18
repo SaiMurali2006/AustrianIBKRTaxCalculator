@@ -32,6 +32,53 @@ KEST_RATE_BANK = 0.25
 DBA_DIVIDEND_CAP = 0.15
 
 
+def _compute_tax(
+    stock_gain: float,
+    stock_loss: float,
+    deriv: float,
+    dividend_total: float,
+    dividend_wht: float,
+    bond_total: float,
+    bond_wht: float,
+    bank_total: float,
+    bank_wht: float,
+) -> dict[str, float]:
+    """Baskets → tax. Single source of the §27a math shared by the final calculation
+    (`TaxAggregator.run`) and the per-event running pot (`_tax_timeline`) so the two can
+    never diverge. WHT is capped per income type at 15% (DBA), baskets are floored at 0,
+    and neither basket's loss crosses the boundary."""
+    cap_div = max(0.0, dividend_total) * DBA_DIVIDEND_CAP
+    cap_bond = max(0.0, bond_total) * DBA_DIVIDEND_CAP
+    creditable_27 = min(abs(dividend_wht), cap_div) + min(abs(bond_wht), cap_bond)
+    cap_bank = max(0.0, bank_total) * DBA_DIVIDEND_CAP
+    creditable_25 = min(abs(bank_wht), cap_bank)
+    excess_above_cap = (
+        abs(dividend_wht) + abs(bond_wht) + abs(bank_wht) - creditable_27 - creditable_25
+    )
+
+    basket_27 = stock_gain + stock_loss + deriv + dividend_total + bond_total
+    basket_25 = bank_total
+    taxable_27 = max(0.0, basket_27)
+    taxable_25 = max(0.0, basket_25)
+    gross_27 = taxable_27 * KEST_RATE
+    gross_25 = taxable_25 * KEST_RATE_BANK
+    net_27 = max(0.0, gross_27 - creditable_27)
+    net_25 = max(0.0, gross_25 - creditable_25)
+    return {
+        "basket_27": basket_27,
+        "basket_25": basket_25,
+        "taxable_27": taxable_27,
+        "taxable_25": taxable_25,
+        "creditable_27": creditable_27,
+        "creditable_25": creditable_25,
+        "gross_27": gross_27,
+        "gross_25": gross_25,
+        "net_27": net_27,
+        "net_25": net_25,
+        "excess_above_cap": excess_above_cap,
+    }
+
+
 class CapitalGainsProcessor:
     """Moving-average stock processor following Austrian average cost logic.
 
@@ -260,36 +307,24 @@ class TaxAggregator:
         # Dividends → 15% per DBA (Austria–USA Art. 10, OECD model). Bond coupons under
         # most DBA treaties are 0–10% (US DBA: 0%); we conservatively cap each separately
         # at 15% of its own gross income and route the excess to excess_wht for source-
-        # country reclaim. Pooling would let unused dividend-cap headroom over-credit
-        # bond WHT that Austria will not actually allow.
-        cap_div = max(0.0, dividend_total) * DBA_DIVIDEND_CAP
-        cap_bond = max(0.0, bond_interest_total) * DBA_DIVIDEND_CAP
-        creditable_wht_div = min(abs(dividend_wht), cap_div)
-        creditable_wht_bond = min(abs(bond_wht), cap_bond)
-        creditable_wht_27 = creditable_wht_div + creditable_wht_bond
-        raw_wht_27 = abs(dividend_wht) + abs(bond_wht)
-        excess_wht_above_cap = raw_wht_27 - creditable_wht_27
+        # country reclaim. Bank-interest WHT gets the same 15% ceiling (§46 EStG + treaty).
+        # All of this lives in _compute_tax so the running pot timeline shares it verbatim.
+        tax = _compute_tax(
+            stock_gain, stock_loss, deriv_gain + deriv_loss,
+            dividend_total, dividend_wht,
+            bond_interest_total, bond_wht,
+            bank_interest_total, bank_wht,
+        )
+        creditable_wht_27 = tax["creditable_27"]
+        creditable_wht_25 = tax["creditable_25"]
+        excess_wht_above_cap = tax["excess_above_cap"]
+        taxable_27 = tax["taxable_27"]
+        taxable_25 = tax["taxable_25"]
+        net_27 = tax["net_27"]
+        net_25 = tax["net_25"]
 
-        # Bank-interest WHT also subject to DBA cap (§46 EStG + treaty). Most DBAs cap
-        # interest at 0–10%; 15% is a conservative ceiling. Excess flows to excess_wht.
-        cap_bank = max(0.0, bank_interest_total) * DBA_DIVIDEND_CAP
-        creditable_wht_25 = min(abs(bank_wht), cap_bank)
-        excess_wht_above_cap += abs(bank_wht) - creditable_wht_25
-
-        basket_27 = stock_gain + stock_loss + deriv_gain + deriv_loss + dividend_total + bond_interest_total
-        basket_25 = bank_interest_total
-
-        taxable_27 = max(0.0, basket_27)
-        taxable_25 = max(0.0, basket_25)
-
-        gross_tax_27 = taxable_27 * KEST_RATE
-        gross_tax_25 = taxable_25 * KEST_RATE_BANK
-
-        net_27 = max(0.0, gross_tax_27 - creditable_wht_27)
-        net_25 = max(0.0, gross_tax_25 - creditable_wht_25)
-
-        used_credit_27 = gross_tax_27 - net_27
-        used_credit_25 = gross_tax_25 - net_25
+        used_credit_27 = tax["gross_27"] - net_27
+        used_credit_25 = tax["gross_25"] - net_25
         # Excess WHT: the part withheld abroad that Austria will not credit — either above
         # the DBA cap, or above the Austrian tax actually owed in that basket. Per §46 EStG
         # this cannot be carried forward; it can only be reclaimed from the source country.
@@ -311,6 +346,8 @@ class TaxAggregator:
         date_strs = audit["date"].dropna().astype(str) if not audit.empty else pd.Series(dtype=str)
         years = pd.to_numeric(date_strs.str[:4], errors="coerce").dropna()
         tax_year = int(years.max()) if not years.empty else None
+
+        tax_timeline = self._tax_timeline(audit)
 
         # KZ 857 carries the SIGNED NET of non-securitised derivative gains and losses
         # (§27a Abs. 2 EStG, general tariff). The 27.5% basket figure here is an ESTIMATE —
@@ -357,7 +394,105 @@ class TaxAggregator:
             foreign_tax_credit_25=round(used_credit_25, 2),
             excluded_isins=sorted(excluded),
             tax_year=tax_year,
+            tax_timeline=tax_timeline,
         )
+
+    def _tax_timeline(self, audit: pd.DataFrame) -> pd.DataFrame:
+        """Per-event running tax pot. Walks every taxable audit row in date order and, after
+        each, recomputes the full §27a liability via _compute_tax — so the pot reflects
+        within-basket gain/loss netting and per-type WHT credits as they accrue. The final
+        row's `tax_pot` equals TaxResult.tax_due. `tax_delta` is the change a single event
+        made to the pot (negative when a loss offsets prior gains and the pot shrinks)."""
+        cols = ["date", "symbol", "category", "event", "taxable_eur", "basket",
+                "tax_delta", "tax_pot", "recover_eur"]
+        if audit.empty:
+            return pd.DataFrame(columns=cols)
+
+        acc = {
+            "stock_gain": 0.0, "stock_loss": 0.0, "deriv": 0.0,
+            "dividend_total": 0.0, "dividend_wht": 0.0,
+            "bond_total": 0.0, "bond_wht": 0.0,
+            "bank_total": 0.0, "bank_wht": 0.0,
+        }
+        prev_pot = 0.0
+        rows: list[dict[str, object]] = []
+
+        ordered = audit.assign(_o=range(len(audit))).sort_values(["date", "_o"])
+        for r in ordered.to_dict("records"):
+            category = str(r.get("category", ""))
+            field = str(r.get("e1kv_field", ""))
+            pnl = float(r.get("realized_pnl_eur") or 0.0)
+            price_eur = float(r.get("price_eur") or 0.0)
+
+            if field == "PRE-2011 EXEMPT":
+                continue
+
+            event = ""
+            taxable_eur = 0.0
+            basket = ""
+            if category == "STK":
+                if pnl > 0:
+                    acc["stock_gain"] += pnl
+                elif pnl < 0:
+                    acc["stock_loss"] += pnl
+                else:
+                    continue
+                event, taxable_eur, basket = "Stock sell", pnl, "27.5%"
+            elif category == "DIV":
+                if field == "998":
+                    acc["dividend_wht"] += price_eur
+                    event, taxable_eur, basket = "Withholding tax", price_eur, "credit"
+                else:
+                    acc["dividend_total"] += pnl
+                    event, taxable_eur, basket = "Dividend", pnl, "27.5%"
+            elif category == "BOND_INT":
+                if field == "998":
+                    acc["bond_wht"] += price_eur
+                    event, taxable_eur, basket = "Withholding tax", price_eur, "credit"
+                else:
+                    acc["bond_total"] += pnl
+                    event, taxable_eur, basket = "Bond interest", pnl, "27.5%"
+            elif category == "BANK_INT":
+                if field == "901":
+                    acc["bank_wht"] += price_eur
+                    event, taxable_eur, basket = "Withholding tax", price_eur, "credit"
+                else:
+                    acc["bank_total"] += pnl
+                    event, taxable_eur, basket = "Bank interest", pnl, "25%"
+            else:
+                # Non-securitised derivatives (OPT/FOP/…) — signed net into KZ 857.
+                if pnl == 0:
+                    continue
+                acc["deriv"] += pnl
+                event, taxable_eur, basket = "Option close", pnl, "27.5%"
+
+            tax = _compute_tax(
+                acc["stock_gain"], acc["stock_loss"], acc["deriv"],
+                acc["dividend_total"], acc["dividend_wht"],
+                acc["bond_total"], acc["bond_wht"],
+                acc["bank_total"], acc["bank_wht"],
+            )
+            pot = round(tax["net_27"] + tax["net_25"], 2)
+            # When a loss drives a basket negative, the pot is floored at 0 and future income
+            # in that basket is tax-free until the accumulated loss is recovered. recover_eur
+            # is how much taxable income the next trades must produce before tax resumes.
+            recover = max(0.0, -tax["basket_27"]) + max(0.0, -tax["basket_25"])
+            rows.append(
+                {
+                    "date": str(r.get("date", "")),
+                    "symbol": str(r.get("symbol", "") or ""),
+                    "category": category,
+                    "event": event,
+                    "taxable_eur": round(taxable_eur, 2),
+                    "basket": basket,
+                    "tax_delta": round(pot - prev_pot, 2),
+                    "tax_pot": pot,
+                    "recover_eur": round(recover, 2),
+                }
+            )
+            prev_pot = pot
+
+        return pd.DataFrame(rows, columns=cols)
 
     def _cash_income(
         self,

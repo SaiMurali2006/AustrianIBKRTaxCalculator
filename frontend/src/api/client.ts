@@ -45,6 +45,8 @@ export interface CalcResult {
   pil_columns: string[];
   corporate_actions: Row[];
   corporate_columns: string[];
+  tax_timeline: TaxTimelineRow[];
+  tax_timeline_columns: string[];
   tax_due: number;
   foreign_tax_credit: number;
   taxable_27: number;
@@ -62,6 +64,18 @@ export interface CalcResult {
   excluded_isins: string[];
   tax_year: number | null;
   performance: Performance;
+}
+
+export interface TaxTimelineRow {
+  date: string;
+  symbol: string;
+  category: string;
+  event: string;
+  taxable_eur: number;
+  basket: string;
+  tax_delta: number;
+  tax_pot: number;
+  recover_eur: number;
 }
 
 export class ApiError extends Error {}

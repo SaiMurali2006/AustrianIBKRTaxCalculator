@@ -41,6 +41,50 @@ def test_sample_runs():
             assert kz == "892", f"Stock loss row should be KZ 892, got {kz}"
 
 
+def test_tax_timeline_reconciles_to_tax_due():
+    """The running tax pot must end exactly at TaxResult.tax_due, and a loss following gains
+    must produce a negative delta (pot shrinks)."""
+    parsed = get_parser("IBKR Flex XML")("sample_flex.xml")
+    result = TaxAggregator().run(parsed)
+    tl = result.tax_timeline
+    assert not tl.empty, "Sample must produce a non-empty tax timeline"
+    final_pot = float(tl.iloc[-1]["tax_pot"])
+    assert abs(final_pot - result.tax_due) < 0.01, (
+        f"Final tax pot {final_pot} must equal tax_due {result.tax_due}"
+    )
+    # tax_delta is the per-event change in the pot; cumulative deltas must track tax_pot.
+    assert abs(tl["tax_delta"].sum() - final_pot) < 0.02, (
+        f"Sum of deltas {tl['tax_delta'].sum()} must equal final pot {final_pot}"
+    )
+
+    # A stock loss after a gain in the same basket shrinks the pot → negative delta.
+    synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
+        <Trades>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="WIN" description="WIN"
+                isin="DE0000000001" dateTime="20260101;100000" quantity="10" tradePrice="100"
+                proceeds="-1000" ibCommission="0" openCloseIndicator="O" cost="1000" fifoPnlRealized="0" buySell="BUY"/>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="WIN" description="WIN"
+                isin="DE0000000001" dateTime="20260201;100000" quantity="-10" tradePrice="200"
+                proceeds="2000" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="0" buySell="SELL"/>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="LOSE" description="LOSE"
+                isin="DE0000000002" dateTime="20260301;100000" quantity="10" tradePrice="100"
+                proceeds="-1000" ibCommission="0" openCloseIndicator="O" cost="1000" fifoPnlRealized="0" buySell="BUY"/>
+            <Trade currency="EUR" fxRateToBase="1" assetCategory="STK" symbol="LOSE" description="LOSE"
+                isin="DE0000000002" dateTime="20260401;100000" quantity="-10" tradePrice="50"
+                proceeds="500" ibCommission="0" openCloseIndicator="C" cost="0" fifoPnlRealized="0" buySell="SELL"/>
+        </Trades>
+        <CashTransactions/>
+    </FlexStatement></FlexStatements></FlexQueryResponse>"""
+    parsed2 = get_parser("IBKR Flex XML")(synthetic_xml.encode())
+    result2 = TaxAggregator().run(parsed2)
+    tl2 = result2.tax_timeline
+    loss_row = tl2[tl2["symbol"] == "LOSE"].iloc[-1]
+    assert float(loss_row["tax_delta"]) < 0, (
+        f"Loss offsetting prior gain must give negative delta, got {loss_row['tax_delta']}"
+    )
+    assert abs(float(tl2.iloc[-1]["tax_pot"]) - result2.tax_due) < 0.01
+
+
 def test_dba_cap_and_excess_surfaced():
     """A synthetic high-WHT dividend should be capped at 15% and excess flagged."""
     synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
@@ -413,6 +457,7 @@ def test_per_type_wht_cap_does_not_cross_subsidise():
 
 if __name__ == "__main__":
     test_sample_runs()
+    test_tax_timeline_reconciles_to_tax_due()
     test_dba_cap_and_excess_surfaced()
     test_altbestand_exclusion()
     test_bank_interest_taxed_at_25_not_275()

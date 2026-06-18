@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "./components/AppShell";
-import { IconSummary, IconAudit, IconPerf, IconUpload } from "./components/icons";
+import { IconSummary, IconAudit, IconPerf, IconPot, IconUpload } from "./components/icons";
 import { EmptyState, Notice } from "./components/primitives";
 import { Controls, type ControlsState } from "./views/Controls";
 import { ExecutiveSummary } from "./views/ExecutiveSummary";
 import { AuditTrail } from "./views/AuditTrail";
 import { Performance } from "./views/Performance";
+import { TaxPot } from "./views/TaxPot";
 import {
   calculate,
   getBrokers,
@@ -19,6 +20,7 @@ const NAV: NavItem[] = [
   { id: "summary", label: "Executive Summary", icon: <IconSummary size={20} /> },
   { id: "audit", label: "Detailed Audit Trail", icon: <IconAudit size={20} /> },
   { id: "performance", label: "Performance", icon: <IconPerf size={20} /> },
+  { id: "taxpot", label: "Tax Pot", icon: <IconPot size={20} /> },
 ];
 
 const INITIAL: ControlsState = {
@@ -59,6 +61,7 @@ export default function App() {
       setParse(null);
       setResult(null);
       setParseError(null);
+      setBusy(false);
       return;
     }
     let cancelled = false;
@@ -135,6 +138,7 @@ export default function App() {
       {result && view === "summary" && <ExecutiveSummary result={result} includeFees={ctrl.includeFees} />}
       {result && view === "audit" && <AuditTrail result={result} />}
       {result && view === "performance" && <Performance result={result} />}
+      {result && view === "taxpot" && <TaxPot result={result} />}
 
       {result && (
         <div className="footer">

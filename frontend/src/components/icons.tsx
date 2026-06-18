@@ -28,10 +28,13 @@ export const IconAudit = (p: IconProps) => (
   <Base {...p}><path d="M3 2h7l3 3v9H3zM10 2v3h3M5 8h6M5 11h4" /></Base>
 );
 export const IconPerf = (p: IconProps) => (
-  <Base {...p}><path d="M2 11l3-3 2 2 5-6M12 4h2v2" /></Base>
+  <Base {...p}><path d="M2.5 10l3-3 2.5 2.5L13 4M9.5 4H13v3.5" /></Base>
 );
 export const IconUpload = (p: IconProps) => (
   <Base {...p}><path d="M8 10V2M5 5l3-3 3 3M2 11v2a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-2" /></Base>
+);
+export const IconPot = (p: IconProps) => (
+  <Base {...p}><path d="M2.5 6.5h11M4 6.5l1 7a1 1 0 0 0 1 .9h4a1 1 0 0 0 1-.9l1-7M8 8.5v3M6.5 10h3" /></Base>
 );
 export const IconClose = (p: IconProps) => (
   <Base {...p}><path d="M4 4l8 8M12 4l-8 8" /></Base>
