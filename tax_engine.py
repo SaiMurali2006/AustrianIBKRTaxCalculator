@@ -1,12 +1,13 @@
 """Austrian KESt engine — broker-agnostic, operates on ParsedData.
 
-E1kv Kennzahl mapping (foreign broker, e.g. IBKR):
-  994  ausländische Substanzgewinne — stocks/ETFs/bonds (27.5%)
-  892  realized capital losses, stocks/ETFs/bonds and non-securitised derivatives (27.5%)
-  857  Einkünfte aus nicht verbrieften Derivaten — options/futures/FOP gains (27.5%)
-  863  foreign dividends (27.5%)
-  409  foreign bond coupon interest — Forderungswertpapiere (27.5%)
-  861  foreign bank deposit interest (25%)
+E1kv Kennzahl mapping (foreign broker, e.g. IBKR) — verified against BMF E1kv 2025
+(version 27.06.2025):
+  994  ausländische Substanzgewinne — stocks/ETFs/bonds (§27 Abs. 3, 27.5%)
+  892  realized capital losses, stocks/ETFs/bonds (§27 Abs. 3, 27.5%)
+  857  Einkünfte aus nicht verbrieften Derivaten ohne freiwilligem Steuerabzug
+       (§27a Abs. 2) — options/futures/FOP net, taxed at the GENERAL TARIFF (not 27.5%)
+  863  foreign dividends AND bond coupon interest (Zinserträge aus Wertpapieren, §27 Abs. 2, 27.5%)
+  861  foreign bank deposit interest (§27a Abs. 1 Z 1, 25%)
   998  creditable foreign withholding tax (27.5% basket)
   901  creditable foreign withholding tax (25% basket)
 
@@ -157,11 +158,13 @@ class CapitalGainsProcessor:
 class DerivativeProcessor:
     """Realized P&L processor for non-securitised derivatives (options, futures, FOP).
 
-    Per §27 Abs 4 EStG and KZ 857 of the BMF E1kv 2024 form: gains AND losses on
-    non-securitised derivatives without freiwilliger KESt-Abzug go in KZ 857 saldiert
-    (net), NOT split between 857 and 892. KZ 892 is reserved for §27 Abs 3 Substanz
-    losses from stocks/ETFs/bonds. Securitised derivatives (WAR, IOPT) belong in
-    KZ 995/896 and are routed to the manual queue by the parser.
+    Per §27a Abs. 2 EStG and KZ 857 (section 1.1.2) of the BMF E1kv 2025 form:
+    non-securitised derivatives WITHOUT freiwilliger Steuerabzug are taxed at the
+    GENERAL TARIFF, not the 27.5% special rate. They go in KZ 857 as a single net
+    figure (the "getrennt/nicht saldiert" rule applies to §27 Abs. 3/4 special-rate
+    fields, not to 857). KZ 892 is reserved for §27 Abs. 3 Substanzverluste from
+    stocks/ETFs/bonds — derivative losses never land there. Securitised derivatives
+    (WAR, IOPT) belong in KZ 995/896 and are routed to the manual queue by the parser.
     """
 
     def __init__(self, fx_provider: ECBRateProvider, include_fees: bool = False) -> None:
@@ -247,7 +250,7 @@ class TaxAggregator:
             parsed.dividends, "DIV", gross_field="863", tax_field="998"
         )
         bond_interest_total, bond_wht, bond_audit = self._cash_income(
-            parsed.bond_interest, "BOND_INT", gross_field="409", tax_field="998"
+            parsed.bond_interest, "BOND_INT", gross_field="863", tax_field="998"
         )
         bank_interest_total, bank_wht, bank_audit = self._cash_income(
             parsed.bank_interest, "BANK_INT", gross_field="861", tax_field="901"
@@ -310,14 +313,16 @@ class TaxAggregator:
         tax_year = int(years.max()) if not years.empty else None
 
         # KZ 857 carries the SIGNED NET of non-securitised derivative gains and losses
-        # (§27 Abs 4 EStG). KZ 892 carries ONLY foreign stock/ETF/bond Substanzverluste
-        # (§27 Abs 3) — derivative losses do not land here.
+        # (§27a Abs. 2 EStG, general tariff). The 27.5% basket figure here is an ESTIMATE —
+        # 857 income is actually taxed at the user's marginal tariff, which the engine cannot
+        # compute. KZ 892 carries ONLY foreign stock/ETF/bond Substanzverluste (§27 Abs. 3) —
+        # derivative losses do not land there. KZ 863 carries foreign dividends AND bond coupon
+        # interest (Zinserträge aus Wertpapieren, §27 Abs. 2) — there is no separate KZ 409.
         fields = {
             "994": round(stock_gain, 2),
             "892": round(abs(stock_loss), 2),
             "857": round(deriv_gain + deriv_loss, 2),
-            "863": round(dividend_total, 2),
-            "409": round(bond_interest_total, 2),
+            "863": round(dividend_total + bond_interest_total, 2),
             "861": round(bank_interest_total, 2),
             "998": round(creditable_wht_27, 2),
             "901": round(creditable_wht_25, 2),

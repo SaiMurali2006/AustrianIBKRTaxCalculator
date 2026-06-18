@@ -8,8 +8,9 @@ def test_sample_runs():
     parsed = get_parser("IBKR Flex XML")("sample_flex.xml")
     result = TaxAggregator().run(parsed)
 
-    for kz in ("994", "892", "857", "863", "409", "861", "998", "901"):
+    for kz in ("994", "892", "857", "863", "861", "998", "901"):
         assert kz in result.e1kv_fields, f"Missing Kennzahl {kz}"
+    assert "409" not in result.e1kv_fields, "KZ 409 does not exist on E1kv — bond interest goes to KZ 863"
 
     assert result.e1kv_fields["994"] > 0, f"Stock SELL should produce KZ 994 gains, got {result.e1kv_fields['994']}"
     assert result.e1kv_fields["857"] > 0, f"Option premium should produce KZ 857 gains, got {result.e1kv_fields['857']}"
@@ -118,8 +119,9 @@ def test_securities_losses_do_not_offset_bank_interest():
     )
 
 
-def test_bond_interest_routed_to_kz_409_not_863():
-    """Bond coupon interest must land in KZ 409 (Forderungswertpapiere), not KZ 863 (dividends)."""
+def test_bond_interest_routed_to_kz_863():
+    """Bond coupon interest (Zinserträge aus Wertpapieren, §27 Abs. 2) lands in KZ 863 alongside
+    dividends — there is no separate KZ 409 on the E1kv form."""
     synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
         <Trades/>
         <CashTransactions>
@@ -131,12 +133,14 @@ def test_bond_interest_routed_to_kz_409_not_863():
     </FlexStatement></FlexStatements></FlexQueryResponse>"""
     parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
     result = TaxAggregator().run(parsed)
-    assert abs(result.e1kv_fields["409"] - 80.0) < 0.01, f"Bond coupon → KZ 409=80, got {result.e1kv_fields['409']}"
-    assert abs(result.e1kv_fields["863"] - 50.0) < 0.01, f"Dividend → KZ 863=50, got {result.e1kv_fields['863']}"
+    assert "409" not in result.e1kv_fields, "KZ 409 must not exist"
+    assert abs(result.e1kv_fields["863"] - 130.0) < 0.01, (
+        f"Dividend (50) + bond coupon (80) → KZ 863=130, got {result.e1kv_fields['863']}"
+    )
 
 
 def test_derivative_loss_lands_in_kz_857_net_signed():
-    """Per §27 Abs 4 + KZ 857: derivative gains AND losses net signed into KZ 857.
+    """Per §27a Abs. 2 + KZ 857: derivative gains AND losses net signed into KZ 857 (general tariff).
     KZ 892 is reserved for §27 Abs 3 Substanzverluste from stocks/ETFs/bonds."""
     synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
         <Trades>
@@ -333,7 +337,7 @@ def test_warrant_routed_to_manual_queue():
 
 
 def test_bank_vs_bond_interest_split_by_type():
-    """IBKR `type` field is authoritative — Broker Interest → KZ 861 (25%), Bond Interest → KZ 409 (27.5%)."""
+    """IBKR `type` field is authoritative — Broker Interest → KZ 861 (25%), Bond Interest → KZ 863 (27.5%)."""
     synthetic_xml = """<FlexQueryResponse><FlexStatements><FlexStatement>
         <Trades/>
         <CashTransactions>
@@ -346,7 +350,7 @@ def test_bank_vs_bond_interest_split_by_type():
     parsed = get_parser("IBKR Flex XML")(synthetic_xml.encode())
     result = TaxAggregator().run(parsed)
     assert abs(result.e1kv_fields["861"] - 10.0) < 0.01, f"Broker interest → KZ 861=10, got {result.e1kv_fields['861']}"
-    assert abs(result.e1kv_fields["409"] - 80.0) < 0.01, f"Bond interest → KZ 409=80, got {result.e1kv_fields['409']}"
+    assert abs(result.e1kv_fields["863"] - 80.0) < 0.01, f"Bond interest → KZ 863=80, got {result.e1kv_fields['863']}"
 
 
 def test_multi_year_statement_detected():
@@ -413,7 +417,7 @@ if __name__ == "__main__":
     test_altbestand_exclusion()
     test_bank_interest_taxed_at_25_not_275()
     test_securities_losses_do_not_offset_bank_interest()
-    test_bond_interest_routed_to_kz_409_not_863()
+    test_bond_interest_routed_to_kz_863()
     test_derivative_loss_lands_in_kz_857_net_signed()
     test_derivative_gains_and_losses_net_in_kz_857()
     test_short_option_expired_worthless()

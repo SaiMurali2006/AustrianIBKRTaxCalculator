@@ -2,7 +2,7 @@
 
 ## Project Purpose
 
-Web dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt — 27.5% securities basket, 25% bank-deposit basket), and maps results to E1kv form Kennzahlen using the codes from the official BMF E1kv 2024 form. Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
+Web dashboard that ingests brokerage statement data, calculates Austrian capital gains tax (KESt — 27.5% securities basket, 25% bank-deposit basket), and maps results to E1kv form Kennzahlen using the codes from the official BMF E1kv 2025 form (version 27.06.2025). Supports IBKR Flex Query XML today; adding a new broker requires only one new file and two lines in the registry.
 
 The UI is a **React + TypeScript** app (Apex Design Language — see `Design.md`) talking to a thin **FastAPI** backend that wraps the frozen Python tax engine. The legacy Streamlit UI (`app.py` + `styles.py`) was retired in this migration.
 
@@ -135,16 +135,15 @@ KEST_RATE_BANK  = 0.25    # 25% bank-deposit-interest basket (§27a Abs. 2 EStG)
 DBA_DIVIDEND_CAP = 0.15   # Foreign WHT credit cap per Austrian DBA treaties
 ```
 
-E1kv Kennzahl mapping — verified against the official **BMF E1kv 2024** form (`https://formulare.bmf.gv.at/service/formulare/inter-Steuern/pdfs/2024/E1kv.pdf`). All values are foreign-broker (IBKR is a foreign depot from Austria's perspective).
+E1kv Kennzahl mapping — verified against the official **BMF E1kv 2025** form (`https://www.bmf.gv.at/`, version 27.06.2025). All values are foreign-broker (IBKR is a foreign depot from Austria's perspective).
 
 | Kennzahl | Category | Basket | Note |
 |---|---|---|---|
-| `"994"` | Foreign stock / ETF / bond realized gains (*ausländische Substanzgewinne*) | 27.5% | Moving-average realization (§27 Abs. 3 EStG). Domestic equivalent is KZ 981 — not used for foreign-broker accounts. |
-| `"892"` | Foreign stock/ETF/bond realized losses (*ausländische Substanzverluste*, §27 Abs 3) | 27.5% | Stocks/ETFs/bonds only. Derivative losses do NOT land here. |
-| `"857"` | Non-securitised derivatives — gains AND losses NET signed (§27 Abs 4) | 27.5% | Securitised derivatives (warrants, certificates — assetCategory WAR/IOPT) belong in KZ 995/896 and are routed to the manual queue. KZ 857 is reported as the signed net (e.g. 1000 gain + 300 loss = 700; or net loss = negative figure). |
-| `"863"` | Foreign dividends (*Auslandsdividenden*) | 27.5% | Gross income only — bond coupon interest goes to KZ 409, not here. |
-| `"409"` | Foreign bond coupon interest (*Forderungswertpapiere*) | 27.5% | Separate from dividends. Same WHT credit pool (KZ 998). |
-| `"861"` | Foreign bank deposit interest | **25%** | Cannot be offset against securities losses |
+| `"994"` | Foreign stock / ETF / bond realized gains (*ausländische Substanzgewinne*) | 27.5% | Moving-average realization (§27 Abs. 3 EStG), form section 1.3.2. Domestic equivalent is KZ 981 — not used for foreign-broker accounts. |
+| `"892"` | Foreign stock/ETF/bond realized losses (*ausländische Substanzverluste*, §27 Abs 3) | 27.5% | Form section 1.3.2. Stocks/ETFs/bonds only. Derivative losses do NOT land here. |
+| `"857"` | Non-securitised derivatives without freiwilliger Steuerabzug — gains AND losses NET signed (§27a Abs. 2, form section **1.1.2**) | **General tariff** | Taxed at the user's marginal progressive rate, NOT 27.5% — the engine's 27.5% basket figure is an estimate (it cannot compute a tariff rate). Single net field (no gains/losses split). Securitised derivatives (WAR/IOPT) and non-securitised derivatives *with* freiwilliger Steuerabzug belong in KZ 982/995/895/896 and are routed to the manual queue. |
+| `"863"` | Foreign dividends AND bond coupon interest (*Auslandsdividenden* + *Zinserträge aus Wertpapieren*, §27 Abs. 2, form section 1.3.1) | 27.5% | Gross income. There is **no KZ 409** on the form — bond coupons share KZ 863 with dividends. The engine keeps an internal dividend/bond split only for the per-income-type WHT cap. |
+| `"861"` | Foreign bank deposit interest (§27a Abs. 1 Z 1, form section 1.2.1) | **25%** | Cannot be offset against securities losses |
 | `"998"` | Creditable foreign WHT, 27.5% basket | — | Capped at 15% of gross **per income type** — dividends and bond interest each get their own 15% cap; cross-subsidy between the two pools is not allowed. |
 | `"901"` | Creditable foreign WHT, 25% basket | — | Rare (bank-deposit WHT) |
 
@@ -342,20 +341,34 @@ The embedded sample toggle defaults to `False` — users must explicitly enable 
 - Dataclasses (`@dataclass`) for all data-transfer objects.
 - No comments unless the *why* is non-obvious (hidden constraint, workaround, legal requirement).
 - No docstrings beyond a single-line module docstring and brief class docstrings.
-- No logging module — Streamlit surfaces status; audit trail is the paper trail.
+- No logging module in the engine — the audit trail is the paper trail; the backend surfaces errors as JSON `{detail}` at the boundary.
 - Pandas for all tabular data; no custom loop-based aggregations when a vectorized op exists.
+
+> The rules above govern the Python **engine + backend**. The React **frontend** follows the Apex Design Language (`Design.md`): TypeScript strict, token-driven CSS, no hardcoded hex, `font-weight ≥ 700` for UI text, ECharts colors resolved via `cssVar()`.
 
 ---
 
 ## Dependencies
 
+**Python** (`requirements.txt`) — engine + backend only:
+
 ```
 pandas>=2.2
-streamlit>=1.35
-altair>=5        # direct import in app.py; also bundled with Streamlit
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9
 ```
 
-Standard library only beyond these. Do not add dependencies without a strong reason.
+The engine (`models.py`, `parsers/`, `tax_engine.py`, `currency_provider.py`) is standard library + pandas only. `streamlit` / `altair` were removed with the Streamlit UI. Do not add Python dependencies without a strong reason.
+
+**Frontend** (`frontend/package.json`) — React 18 + TypeScript + Vite, ECharts for charts:
+
+```
+react / react-dom ^18.3      echarts ^5.5 + echarts-for-react ^3.0
+vite ^5.4 + @vitejs/plugin-react      typescript ^5.6
+```
+
+No CSS framework, no CSS-in-JS — plain CSS custom properties only (Design.md §2). Do not add a UI/component library; build primitives from tokens.
 
 ---
 
@@ -400,12 +413,12 @@ Smoke test (engine only, no server): `python smoke_test.py`.
 - Do not net gains against losses before emitting Kennzahlen. KZ 994 (gains) and KZ 892 (losses) must be reported separately so the Finanzamt can verify Verlustausgleich.
 - Do not silently discard non-creditable foreign WHT. Surface it via `TaxResult.excess_wht` so the user can reclaim from the source country.
 - Do not route non-securitised derivative gains to KZ 981. KZ 981 is for *inländische* (domestic) substance gains only. Foreign-broker option/futures gains belong in **KZ 857** (`Einkünfte aus nicht verbrieften Derivaten`).
-- Do not lump bond coupon interest into KZ 863. KZ 863 is *Auslandsdividenden* only. Foreign bond coupons go to **KZ 409** (`Forderungswertpapiere`).
+- Bond coupon interest (*Zinserträge aus Wertpapieren*, §27 Abs. 2) belongs in **KZ 863** alongside dividends — the BMF E1kv 2025 form lists both under section 1.3.1. There is **no KZ 409** on the form; do not emit it. (The parser still splits `bond_interest` from `bank_interest` because they fall into different baskets — 27.5% vs 25% — but on the E1kv both 863 and dividends share the cell.)
 - Do not auto-file securitised derivatives (WAR, IOPT) as KZ 857. They belong in KZ 995/896 (out of scope) — route them to the manual review queue (`ParsedData.funds`).
 - Do not run the engine over a multi-year statement. §27a EStG forbids cross-year offsets for private investors. Use `years_in_parsed()` and reject when more than one year is present, instructing the user to export one Flex Query per year.
 - Do not pool the foreign WHT cap across dividends and bond interest. The 15% DBA cap is applied per income type; pooling allows illegal cross-subsidy.
 - Do not credit foreign bank-interest WHT at 100%. Apply the same 15% DBA ceiling — most treaties cap interest at 0–10%, so 15% is the conservative outer bound. Excess goes to `TaxResult.excess_wht`.
-- Do not route derivative losses into KZ 892. KZ 892 is **Substanzverluste only** (§27 Abs 3 stocks/ETFs/bonds). Derivative gains AND losses go into KZ 857 as a signed net (§27 Abs 4).
+- Do not route derivative losses into KZ 892. KZ 892 is **Substanzverluste only** (§27 Abs 3 stocks/ETFs/bonds). Non-securitised derivative gains AND losses go into KZ 857 as a signed net (§27a Abs. 2, form section 1.1.2 — taxed at the general tariff, NOT the 27.5% special rate). Do not relabel KZ 857 as §27 Abs 4 / 27.5%; the §27 Abs 4 special-rate derivative cells (982/995/895/896) require securitised instruments or freiwilliger Steuerabzug.
 - Do not file Payment in Lieu rows as Auslandsdividenden. PIL is a securities-lending Surrogat (EStR Rz 6228), not §27 Abs 2 dividend — route it to `ParsedData.pil_payments` for manual review, never into KZ 863.
 - Do not silently drop `CorporateAction` nodes. Surface splits, spin-offs, mergers, name changes via `ParsedData.corporate_actions` → `TaxResult.corporate_actions`. The engine does NOT auto-adjust cost basis.
 - Do not exempt all units of a marked Altbestand ISIN when the user supplies a quantity. Only the entered quantity is exempt; SELLs above that quantity hit the taxable Neubestand pool.

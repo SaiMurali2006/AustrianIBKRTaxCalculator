@@ -90,7 +90,7 @@ def parse(source: str | Path | bytes) -> ParsedData:
         if not dividends_raw.empty
         else _empty(CASH_COLUMNS)
     )
-    # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 409).
+    # Bank deposit interest (25% basket, KZ 861) vs bond coupon interest (27.5% basket, KZ 863).
     # Prefer the IBKR `type` attribute — it is authoritative. Fall back to description match
     # for older Flex exports that left `type` blank.
     #   Bank-deposit types: "Broker Interest Received/Paid", "Deposit Interest", "Credit Interest"
