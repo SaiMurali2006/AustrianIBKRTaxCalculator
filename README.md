@@ -96,7 +96,7 @@ engine rejects multi-year statements (HTTP 422).
 |---|---|---|
 | `GET`  | `/api/brokers` | List brokers `[{name, hasSample}]` from the registry |
 | `POST` | `/api/parse` | Multipart `broker` + `file` **or** `use_sample`. Caches `ParsedData` by content hash; returns `{parseKey, years, counts, altbestandCandidates}`. **422** on a multi-year statement |
-| `POST` | `/api/calculate` | JSON `{parseKey, includeFees, excludedIsins, altbestandQuantities}` → full serialized `TaxResult` (incl. a `performance` block) + `calcKey` |
+| `POST` | `/api/calculate` | JSON `{parseKey, includeFees, excludedIsins, altbestandQuantities}` → full serialized `TaxResult` (incl. `performance` and `tax_timeline` blocks) + `calcKey` |
 | `GET`  | `/api/export/{kind}?calcKey=` | `kind ∈ {e1kv, audit, manual}` → streamed `text/csv` |
 
 A two-step in-memory cache mirrors the engine's old session caching: parse is keyed by the
@@ -144,6 +144,14 @@ Full legal rationale and Kennzahl notes live in [`CLAUDE.md`](CLAUDE.md).
   in-Lieu, and corporate-actions queues, each with CSV export where applicable.
 - **Performance** — realized STK/OPT trades only: P/L / fees / estimated KeSt / effective-rate
   StatCards, a cumulative P/L timeline, a monthly gains/fees/tax breakdown, and top holdings.
+- **Tax Pot** — a running KeSt set-aside tracker. Walks **every taxable event** (stock/option
+  realizations, dividends, bond/bank interest, WHT credits) in date order and recomputes the full
+  §27a liability after each, so the pot reflects within-basket gain/loss netting and per-type WHT
+  credits as they accrue — the final pot equals the headline `tax_due`. Shows the running pot,
+  each event's tax **delta** (negative when a loss offsets prior gains and the pot shrinks), and a
+  **To Taxable Again** figure: when accumulated losses drive a basket negative, the amount future
+  trades must earn back before any new tax is owed. Hero StatCards + a pot-over-time chart + an
+  event ledger.
 
 Theme is switched from the **logo badge** (top-left): light / dark / system + 8 accent presets +
 a custom hex input, persisted to `localStorage`. The whole UI (and every chart) recolors live.
@@ -171,11 +179,11 @@ tax_engine.py        TaxAggregator + E1kv mapping (broker-agnostic)
 currency_provider.py ECB EUR conversion + cache
 backend/
   main.py            FastAPI endpoints + two-step cache
-  serialize.py       DataFrame/dataclass → JSON (+ performance block)
+  serialize.py       DataFrame/dataclass → JSON (+ performance & tax_timeline blocks)
 frontend/
   src/theme/         tokens.css, ThemeProvider, onAccent, chartTheme
   src/components/    AppShell (+LogoBadge/ThemePopover/SegmentedControl), primitives, Chart, icons
-  src/views/         Controls, ExecutiveSummary, AuditTrail, Performance
+  src/views/         Controls, ExecutiveSummary, AuditTrail, Performance, TaxPot
   src/api/client.ts  typed fetch wrapper
 smoke_test.py        engine verification
 ```
