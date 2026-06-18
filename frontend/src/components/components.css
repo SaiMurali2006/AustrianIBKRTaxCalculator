@@ -49,7 +49,9 @@
   font-family: var(--font);
 }
 /* collapsed rail centres the icon; expanded reveals the label left-aligned */
-.sidebar:not(:hover) .nav__link { justify-content: center; }
+.sidebar:not(:hover) .nav__link { justify-content: center; gap: 0; }
+/* collapsed: drop the label from layout entirely so the icon truly centres */
+.sidebar:not(:hover) .nav__label { display: none; }
 .nav__link svg { flex-shrink: 0; }
 .nav__link:hover { background: var(--card-hover); color: var(--text); }
 .nav__link.active { background: var(--accent-soft); color: var(--accent); }
@@ -286,6 +288,8 @@ table.data thead th {
   text-align: left; padding: 10px 12px; white-space: nowrap;
   border-bottom: 1px solid var(--line-soft);
 }
+/* Skip layout/paint of off-screen rows so large audit tables mount instantly. */
+table.data tbody tr { content-visibility: auto; contain-intrinsic-size: auto 35px; }
 table.data tbody td {
   padding: 8px 12px; border-bottom: 1px solid var(--line-soft);
   color: var(--text); white-space: nowrap;

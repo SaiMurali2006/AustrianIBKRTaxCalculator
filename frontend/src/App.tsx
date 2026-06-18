@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { startTransition, useEffect, useMemo, useState } from "react";
 import { AppShell, type NavItem } from "./components/AppShell";
 import { IconSummary, IconAudit, IconPerf, IconPot, IconUpload } from "./components/icons";
 import { EmptyState, Notice } from "./components/primitives";
@@ -118,7 +118,7 @@ export default function App() {
   }, [calcSig]);
 
   return (
-    <AppShell nav={NAV} active={view} onNavigate={setView}>
+    <AppShell nav={NAV} active={view} onNavigate={(id) => startTransition(() => setView(id))}>
       {ctrl.useSample && parse && (
         <Notice kind="info">Showing embedded sample data — upload your own statement to calculate real results.</Notice>
       )}
